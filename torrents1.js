@@ -1,113 +1,73 @@
 (function () {
     'use strict';
 
-    function startPlugin() {
-      // --- Буфер для хранения исходных объектов раздач от парсера ---
-      var last_parsed_results = [];
+    // Глобальное хранилище найденных раздач
+    window._lampa_captured_torrents = window._lampa_captured_torrents || [];
+    window._lampa_last_torrent = null;
 
-      // 1. Перехват выдачи парсера (JacRed / Jackett) для сохранения MagnetUri
-      if (window.Lampa && Lampa.Parser) {
-        if (!Lampa.Parser._orig_magnet_get) {
-          Lampa.Parser._orig_magnet_get = Lampa.Parser.get;
+    function saveTorrentData(obj) {
+      if (!obj) return;
+      if (Array.isArray(obj)) {
+        obj.forEach(saveTorrentData);
+        return;
+      }
+      if (obj.MagnetUri || obj.Link || obj.hash || obj.InfoHash || obj.magnet) {
+        // Проверка на дубликат по хэшу или ссылке
+        var exists = window._lampa_captured_torrents.some(function (t) {
+          return (t.hash && t.hash === obj.hash) || (t.Title && t.Title === obj.Title);
+        });
+        if (!exists) {
+          window._lampa_captured_torrents.push(obj);
         }
-        Lampa.Parser.get = function (params, complite, error) {
-          return Lampa.Parser._orig_magnet_get.call(this, params, function (results) {
-            if (Array.isArray(results)) {
-              last_parsed_results = results.map(function (item) {
-                item._ui_matched = false;
-                return item;
-              });
-            }
-            complite(results);
-          }, error);
-        };
+      }
+    }
+
+    function extractMagnet(data) {
+      if (!data) return '';
+      if (typeof data === 'string' && data.indexOf('magnet:') === 0) return data;
+      if (data.MagnetUri && data.MagnetUri.indexOf('magnet:') === 0) return data.MagnetUri;
+      if (data.magnet && data.magnet.indexOf('magnet:') === 0) return data.magnet;
+      if (data.Link && data.Link.indexOf('magnet:') === 0) return data.Link;
+      if (data.link && data.link.indexOf('magnet:') === 0) return data.link;
+
+      var hash = data.hash || data.Hash || data.info_hash || data.InfoHash;
+      if (hash) {
+        var title = data.title || data.Title || '';
+        return 'magnet:?xt=urn:btih:' + hash + (title ? '&dn=' + encodeURIComponent(title) : '');
+      }
+      return data.MagnetUri || data.Link || '';
+    }
+
+    function copyToClipboard(text) {
+      if (!text) {
+        Lampa.Noty.show('Ссылка не найдена');
+        return;
       }
 
-      // --- Вспомогательные функции извлечения и копирования ---
-      function findTorrentData(vars) {
-        if (!vars) return null;
-        if (vars.MagnetUri || vars.Link || vars.hash || vars.InfoHash) return vars;
-
-        var targetTitle = (vars.title || vars.Title || '').trim();
-        var targetTracker = (vars.tracker || vars.Tracker || '').toLowerCase();
-
-        // Поиск первого свободного совпадения по названию и трекеру
-        for (var i = 0; i < last_parsed_results.length; i++) {
-          var el = last_parsed_results[i];
-          if (el._ui_matched) continue;
-          var elTitle = (el.Title || el.title || '').trim();
-          var elTracker = (el.Tracker || el.tracker || '').toLowerCase();
-
-          if (elTitle === targetTitle && (!targetTracker || elTracker === targetTracker)) {
-            el._ui_matched = true;
-            return el;
-          }
-        }
-
-        // Запасной поиск без учета флага
-        for (var j = 0; j < last_parsed_results.length; j++) {
-          var item = last_parsed_results[j];
-          var tTitle = (item.Title || item.title || '').trim();
-          if (tTitle === targetTitle) return item;
-        }
-
-        return null;
+      function onDone() {
+        Lampa.Noty.show('🧲 Magnet скопирован в буфер!');
       }
 
-      function extractMagnet(source, vars) {
-        var data = source || vars || {};
-
-        if (typeof data.MagnetUri === 'string' && data.MagnetUri.indexOf('magnet:') === 0) return data.MagnetUri;
-        if (typeof data.magnet === 'string' && data.magnet.indexOf('magnet:') === 0) return data.magnet;
-        if (typeof data.Link === 'string' && data.Link.indexOf('magnet:') === 0) return data.Link;
-        if (typeof data.link === 'string' && data.link.indexOf('magnet:') === 0) return data.link;
-
-        var hash = data.InfoHash || data.info_hash || data.Hash || data.hash;
-        if (hash) {
-          var title = data.Title || data.title || (vars && (vars.Title || vars.title)) || '';
-          return 'magnet:?xt=urn:btih:' + hash + (title ? '&dn=' + encodeURIComponent(title) : '');
-        }
-
-        return data.Link || data.link || '';
-      }
-
-      function copyText(text) {
-        if (!text) {
-          Lampa.Noty.show('Ссылка не найдена');
-          return;
-        }
-
-        function showOk() {
-          Lampa.Noty.show('🧲 Magnet скопирован в буфер');
-        }
-
-        function fallbackPrompt(val) {
-          if (Lampa.Modal) {
-            Lampa.Modal.open({
-              title: 'Magnet-ссылка',
-              html: $('<div style="padding: 1.5em;"><p style="margin-bottom: 10px; font-size: 14px;">Выделите и скопируйте (Ctrl+C):</p><input type="text" id="lampa_magnet_out" style="width: 100%; padding: 10px; background: rgba(255,255,255,0.1); color: #fff; border: 1px solid rgba(255,255,255,0.3); border-radius: 4px;" value="' + val + '" /></div>'),
-              size: 'medium',
-              onBack: function () { Lampa.Modal.close(); }
-            });
-            setTimeout(function () {
-              var inp = document.getElementById('lampa_magnet_out');
-              if (inp) { inp.focus(); inp.select(); }
-            }, 100);
-          } else {
-            window.prompt('Скопируйте magnet-ссылку:', val);
-          }
-        }
-
-        if (navigator.clipboard && window.isSecureContext) {
-          navigator.clipboard.writeText(text).then(showOk).catch(function () {
-            tryLegacyCopy(text, showOk, fallbackPrompt);
+      function onFallback() {
+        if (Lampa.Modal) {
+          Lampa.Modal.open({
+            title: 'Magnet-ссылка',
+            html: $('<div style="padding: 1.2em;"><p style="font-size: 13px; margin-bottom: 8px;">Выделите и скопируйте вручную (Ctrl+C):</p><input type="text" id="lampa_copy_val" readonly style="width: 100%; padding: 8px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.3); color: #fff; border-radius: 4px;" value="' + text.replace(/"/g, '&quot;') + '" /></div>'),
+            size: 'medium',
+            onBack: function () { Lampa.Modal.close(); }
           });
+          setTimeout(function () {
+            var input = document.getElementById('lampa_copy_val');
+            if (input) { input.focus(); input.select(); }
+          }, 100);
         } else {
-          tryLegacyCopy(text, showOk, fallbackPrompt);
+          window.prompt('Скопируйте magnet-ссылку:', text);
         }
       }
 
-      function tryLegacyCopy(text, onSuccess, onFail) {
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(text).then(onDone).catch(onFallback);
+      } else {
         try {
           var ta = document.createElement('textarea');
           ta.value = text;
@@ -118,76 +78,166 @@
           ta.select();
           var ok = document.execCommand('copy');
           document.body.removeChild(ta);
-          if (ok) onSuccess();
-          else onFail(text);
+          if (ok) onDone();
+          else onFallback();
         } catch (e) {
-          onFail(text);
+          onFallback();
         }
       }
+    }
 
-      // --- Привязка кнопки и меню к элементу раздачи ---
-      function attachMagnetButton(item, vars) {
-        if (!item || !item.find || item.data('magnet_ready')) return;
-        item.data('magnet_ready', true);
+    function findTorrentByNode(node) {
+      if (!node) return window._lampa_last_torrent;
+      var text = $(node).text().toLowerCase();
 
-        var btn = $(
-          '<div class="torrent-item__detail torrent-item__magnet-btn" style="' +
-            'display: inline-flex; align-items: center; padding: 2px 7px; margin-left: 10px; ' +
-            'border-radius: 4px; background: rgba(255, 255, 255, 0.15); color: #fff; ' +
-            'font-size: 11px; font-weight: bold; cursor: pointer; user-select: none; ' +
-            'transition: background 0.15s ease;' +
-          '">🧲 Magnet</div>'
+      for (var i = 0; i < window._lampa_captured_torrents.length; i++) {
+        var item = window._lampa_captured_torrents[i];
+        var title = (item.Title || item.title || '').toLowerCase().trim();
+        if (title && (text.indexOf(title.slice(0, 18)) !== -1 || title.indexOf(text.slice(0, 18)) !== -1)) {
+          return item;
+        }
+      }
+      return window._lampa_last_torrent;
+    }
+
+    // 1. Перехват отправки в TorrServer (Скриншот 2)
+    if (window.Lampa && Lampa.Torrserver) {
+      ['stream', 'connect', 'play'].forEach(function (method) {
+        if (typeof Lampa.Torrserver[method] === 'function') {
+          var orig_method = Lampa.Torrserver[method];
+          Lampa.Torrserver[method] = function (torrent) {
+            if (torrent) {
+              window._lampa_last_torrent = torrent;
+              saveTorrentData(torrent);
+            }
+            return orig_method.apply(this, arguments);
+          };
+        }
+      });
+    }
+
+    // 2. Перехват выдачи парсеров Lampa
+    if (window.Lampa && Lampa.Parser && !Lampa.Parser._magnet_hooked) {
+      Lampa.Parser._magnet_hooked = true;
+      var orig_parser_get = Lampa.Parser.get;
+      Lampa.Parser.get = function (params, complite, error) {
+        return orig_parser_get.call(this, params, function (results) {
+          if (Array.isArray(results)) {
+            saveTorrentData(results);
+          }
+          complite(results);
+        }, error);
+      };
+    }
+
+    // 3. Добавление пункта в меню «Действие» (Скриншот 1)
+    if (window.Lampa && Lampa.Select && !Lampa.Select._magnet_hooked) {
+      Lampa.Select._magnet_hooked = true;
+      var orig_select_show = Lampa.Select.show;
+
+      Lampa.Select.show = function (params) {
+        if (params && Array.isArray(params.items)) {
+          var isTorrentAction = params.items.some(function (it) {
+            var t = (it.title || '') + (it.subtitle || '');
+            return t.indexOf('торрент') !== -1 || t.indexOf('раздач') !== -1;
+          });
+
+          if (isTorrentAction) {
+            var focused = Lampa.Navigator ? Lampa.Navigator.focused() : null;
+            var targetTorrent = findTorrentByNode(focused) || window._lampa_last_torrent;
+            var magnetLink = extractMagnet(targetTorrent);
+
+            if (magnetLink) {
+              params.items.unshift({
+                title: '🧲 Скопировать Magnet-ссылку',
+                subtitle: 'Скопировать раздачу в буфер обмена',
+                magnet_action: true
+              });
+
+              var orig_onSelect = params.onSelect;
+              params.onSelect = function (selected) {
+                if (selected.magnet_action) {
+                  copyToClipboard(magnetLink);
+                  if (Lampa.Controller) Lampa.Controller.toggle('content');
+                  return;
+                }
+                if (orig_onSelect) orig_onSelect.apply(this, arguments);
+              };
+            }
+          }
+        }
+        return orig_select_show.apply(this, arguments);
+      };
+    }
+
+    // 4. Встраивание кнопки копирования в окно ошибки TorrServer (Скриншот 2)
+    if (window.Lampa && Lampa.Modal && !Lampa.Modal._magnet_hooked) {
+      Lampa.Modal._magnet_hooked = true;
+      var orig_modal_open = Lampa.Modal.open;
+
+      Lampa.Modal.open = function (data) {
+        if (data && data.title && data.title.indexOf('подключения') !== -1) {
+          var magnet = extractMagnet(window._lampa_last_torrent);
+          if (magnet && data.html) {
+            var btnHtml = $(
+              '<div class="simple-button selector" style="' +
+                'margin: 15px 0 5px; background: #e50914; color: #fff; font-weight: bold; ' +
+                'text-align: center; padding: 12px; border-radius: 6px; cursor: pointer;' +
+              '">🧲 Скопировать Magnet этой раздачи</div>'
+            );
+
+            btnHtml.on('click', function () {
+              copyToClipboard(magnet);
+            });
+
+            data.html.find('.modal__content, div').first().prepend(btnHtml);
+          }
+        }
+        return orig_modal_open.apply(this, arguments);
+      };
+    }
+
+    // 5. Постоянный наблюдатель DOM для отрисовки кнопки [🧲 Magnet] в списке
+    var domObserver = new MutationObserver(function () {
+      $('.torrent-item').each(function () {
+        var row = $(this);
+        if (row.data('has_magnet_btn')) return;
+        row.data('has_magnet_btn', true);
+
+        var details = row.find('.torrent-item__details');
+        if (!details.length) return;
+
+        var magnetBtn = $(
+          '<span class="torrent-item__detail" style="' +
+            'cursor: pointer; color: #fff; background: rgba(255,255,255,0.18); ' +
+            'padding: 2px 7px; border-radius: 4px; font-weight: bold; margin-left: 8px;' +
+          '" title="Скопировать magnet">🧲 Magnet</span>'
         );
 
-        btn.on('mouseenter', function () { $(this).css('background', 'rgba(255, 255, 255, 0.3)'); });
-        btn.on('mouseleave', function () { $(this).css('background', 'rgba(255, 255, 255, 0.15)'); });
+        magnetBtn.on('mouseenter', function () { $(this).css('background', 'rgba(255,255,255,0.35)'); });
+        magnetBtn.on('mouseleave', function () { $(this).css('background', 'rgba(255,255,255,0.18)'); });
 
-        function handleCopy(e) {
-          if (e) {
-            e.preventDefault();
-            e.stopPropagation();
-          }
-          var rawData = findTorrentData(vars);
-          var link = extractMagnet(rawData, vars);
-          copyText(link);
-        }
-
-        btn.on('click', handleCopy);
-
-        var details = item.find('.torrent-item__details');
-        if (details.length) {
-          details.append(btn);
-        } else {
-          item.append(btn);
-        }
-
-        // Контекстное меню по ПКМ
-        item.on('contextmenu', function (e) {
-          handleCopy(e);
-          return false;
+        magnetBtn.on('click', function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          var t = findTorrentByNode(row);
+          copyToClipboard(extractMagnet(t));
         });
 
-        // Долгое удержание ОК (для ТВ пульта)
-        item.on('hover:long', function (e) {
-          handleCopy(e);
-        });
-      }
+        details.append(magnetBtn);
+      });
+    });
 
-      // 2. Перехват создания карточки раздачи в интерфейсе
-      if (window.Lampa && Lampa.Template) {
-        if (!Lampa.Template._orig_magnet_get) {
-          Lampa.Template._orig_magnet_get = Lampa.Template.get;
-        }
-        Lampa.Template.get = function (name, vars, bool) {
-          var item = Lampa.Template._orig_magnet_get.apply(this, arguments);
-          if (name === 'torrent_item' && vars && item && item.find) {
-            attachMagnetButton(item, vars);
-          }
-          return item;
-        };
-      }
+    domObserver.observe(document.body, { childList: true, subtree: true });
 
-      // --- Оригинальная логика плагина Jackett ByLampa ---
+    // Фиксация активного элемента по ПКМ
+    document.addEventListener('contextmenu', function (e) {
+      var el = e.target.closest('.torrent-item');
+      if (el) window._lampa_last_torrent = findTorrentByNode(el);
+    }, true);
+
+    // --- Оригинальная логика Jackett ByLampa ---
+    function startPlugin() {
       function add() {
         function button_click(data) {
           var year = ((data.movie.first_air_date || data.movie.release_date || '0000') + '').slice(0, 4);
