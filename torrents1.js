@@ -1,242 +1,338 @@
 (function () {
     'use strict';
 
-    // Глобальное хранилище найденных раздач
-    window._lampa_captured_torrents = window._lampa_captured_torrents || [];
-    window._lampa_last_torrent = null;
+    // База сопоставления раздач
+    window._lampa_torrents_list = window._lampa_torrents_list || [];
+    window._lampa_intercept_copy = false;
 
-    function saveTorrentData(obj) {
+    function cleanStr(s) {
+      if (!s) return '';
+      return (s + '').toLowerCase().replace(/[^a-zа-я0-9]/gi, '');
+    }
+
+    function saveToCache(title, tracker, size, link, hash, rawObj) {
+      var magnet = link || '';
+      if ((!magnet || magnet.indexOf('magnet:') !== 0) && hash) {
+        magnet = 'magnet:?xt=urn:btih:' + hash + (title ? '&dn=' + encodeURIComponent(title) : '');
+      }
+      if (!magnet) magnet = link;
+      if (!magnet) return;
+
+      var entry = {
+        title: (title || '').trim(),
+        titleClean: cleanStr(title),
+        tracker: (tracker || '').toLowerCase().trim(),
+        size: size,
+        magnet: magnet,
+        hash: hash,
+        raw: rawObj
+      };
+
+      var exists = window._lampa_torrents_list.some(function (t) {
+        return t.magnet === entry.magnet;
+      });
+
+      if (!exists) {
+        window._lampa_torrents_list.push(entry);
+      }
+    }
+
+    function extractFromObject(obj) {
       if (!obj) return;
       if (Array.isArray(obj)) {
-        obj.forEach(saveTorrentData);
+        obj.forEach(extractFromObject);
         return;
       }
-      if (obj.MagnetUri || obj.Link || obj.hash || obj.InfoHash || obj.magnet) {
-        // Проверка на дубликат по хэшу или ссылке
-        var exists = window._lampa_captured_torrents.some(function (t) {
-          return (t.hash && t.hash === obj.hash) || (t.Title && t.Title === obj.Title);
-        });
-        if (!exists) {
-          window._lampa_captured_torrents.push(obj);
+      if (typeof obj === 'object') {
+        var link = obj.MagnetUri || obj.Link || obj.magnet || obj.link || '';
+        var hash = obj.InfoHash || obj.info_hash || obj.Hash || obj.hash || '';
+        var title = obj.Title || obj.title || '';
+
+        if (link || hash) {
+          saveToCache(title, obj.Tracker || obj.tracker, obj.Size || obj.size, link, hash, obj);
+        }
+
+        for (var k in obj) {
+          if (Array.isArray(obj[k])) {
+            obj[k].forEach(extractFromObject);
+          }
         }
       }
     }
 
-    function extractMagnet(data) {
-      if (!data) return '';
-      if (typeof data === 'string' && data.indexOf('magnet:') === 0) return data;
-      if (data.MagnetUri && data.MagnetUri.indexOf('magnet:') === 0) return data.MagnetUri;
-      if (data.magnet && data.magnet.indexOf('magnet:') === 0) return data.magnet;
-      if (data.Link && data.Link.indexOf('magnet:') === 0) return data.Link;
-      if (data.link && data.link.indexOf('magnet:') === 0) return data.link;
+    // --- 1. Глобальный перехват сетевых ответов JacRed / Jackett (XHR + Fetch) ---
+    (function interceptNetwork() {
+      if (window._lampa_net_intercepted) return;
+      window._lampa_net_intercepted = true;
 
-      var hash = data.hash || data.Hash || data.info_hash || data.InfoHash;
-      if (hash) {
-        var title = data.title || data.Title || '';
-        return 'magnet:?xt=urn:btih:' + hash + (title ? '&dn=' + encodeURIComponent(title) : '');
+      var origXHRSend = XMLHttpRequest.prototype.send;
+      XMLHttpRequest.prototype.send = function () {
+        this.addEventListener('load', function () {
+          try {
+            var txt = this.responseText;
+            if (txt && (txt.indexOf('magnet:') !== -1 || txt.indexOf('MagnetUri') !== -1 || txt.indexOf('InfoHash') !== -1 || txt.indexOf('btih') !== -1)) {
+              var json = JSON.parse(txt);
+              extractFromObject(json);
+            }
+          } catch (e) {}
+        });
+        return origXHRSend.apply(this, arguments);
+      };
+
+      if (window.fetch) {
+        var origFetch = window.fetch;
+        window.fetch = function () {
+          return origFetch.apply(this, arguments).then(function (res) {
+            try {
+              var clone = res.clone();
+              clone.text().then(function (txt) {
+                if (txt && (txt.indexOf('magnet:') !== -1 || txt.indexOf('MagnetUri') !== -1 || txt.indexOf('InfoHash') !== -1 || txt.indexOf('btih') !== -1)) {
+                  extractFromObject(JSON.parse(txt));
+                }
+              }).catch(function () {});
+            } catch (e) {}
+            return res;
+          });
+        };
       }
-      return data.MagnetUri || data.Link || '';
+    })();
+
+    // --- 2. Поиск magnet по элементу раздачи ---
+    function findMagnetForElement(elem) {
+      var $el = $(elem);
+      if ($el.data('magnet_url')) return $el.data('magnet_url');
+
+      var text = $el.text();
+      var cleanElemText = cleanStr(text);
+      var list = window._lampa_torrents_list;
+
+      // Поиск по полному совпадению очищенного названия
+      for (var i = 0; i < list.length; i++) {
+        if (list[i].titleClean && cleanElemText.indexOf(list[i].titleClean) !== -1) {
+          $el.data('magnet_url', list[i].magnet);
+          return list[i].magnet;
+        }
+      }
+
+      // Поиск по первым 15 символам названия
+      for (var j = 0; j < list.length; j++) {
+        if (list[j].titleClean && list[j].titleClean.length >= 10) {
+          var prefix = list[j].titleClean.slice(0, 15);
+          if (cleanElemText.indexOf(prefix) !== -1) {
+            $el.data('magnet_url', list[j].magnet);
+            return list[j].magnet;
+          }
+        }
+      }
+
+      // Сопоставление по порядковому номеру на экране
+      var allRows = $('.torrent-item');
+      var idx = allRows.index($el);
+      if (idx !== -1 && list[idx] && list[idx].magnet) {
+        return list[idx].magnet;
+      }
+
+      return null;
     }
 
+    // --- 3. Буфер обмена ---
     function copyToClipboard(text) {
       if (!text) {
         Lampa.Noty.show('Ссылка не найдена');
         return;
       }
 
-      function onDone() {
+      function onOk() {
         Lampa.Noty.show('🧲 Magnet скопирован в буфер!');
       }
 
-      function onFallback() {
+      function onFail(val) {
         if (Lampa.Modal) {
           Lampa.Modal.open({
             title: 'Magnet-ссылка',
-            html: $('<div style="padding: 1.2em;"><p style="font-size: 13px; margin-bottom: 8px;">Выделите и скопируйте вручную (Ctrl+C):</p><input type="text" id="lampa_copy_val" readonly style="width: 100%; padding: 8px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.3); color: #fff; border-radius: 4px;" value="' + text.replace(/"/g, '&quot;') + '" /></div>'),
+            html: $('<div style="padding: 1.2em;"><p style="font-size: 13px; margin-bottom: 8px;">Выделите и скопируйте (Ctrl+C):</p><input type="text" id="lampa_copy_field" style="width: 100%; padding: 8px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.3); color: #fff; border-radius: 4px;" value="' + val.replace(/"/g, '&quot;') + '" /></div>'),
             size: 'medium',
             onBack: function () { Lampa.Modal.close(); }
           });
           setTimeout(function () {
-            var input = document.getElementById('lampa_copy_val');
-            if (input) { input.focus(); input.select(); }
+            var inp = document.getElementById('lampa_copy_field');
+            if (inp) { inp.focus(); inp.select(); }
           }, 100);
         } else {
-          window.prompt('Скопируйте magnet-ссылку:', text);
+          window.prompt('Скопируйте magnet-ссылку:', val);
         }
       }
 
       if (navigator.clipboard && window.isSecureContext) {
-        navigator.clipboard.writeText(text).then(onDone).catch(onFallback);
+        navigator.clipboard.writeText(text).then(onOk).catch(function () {
+          fallbackCopy(text, onOk, onFail);
+        });
       } else {
-        try {
-          var ta = document.createElement('textarea');
-          ta.value = text;
-          ta.style.position = 'fixed';
-          ta.style.left = '-9999px';
-          document.body.appendChild(ta);
-          ta.focus();
-          ta.select();
-          var ok = document.execCommand('copy');
-          document.body.removeChild(ta);
-          if (ok) onDone();
-          else onFallback();
-        } catch (e) {
-          onFallback();
+        fallbackCopy(text, onOk, onFail);
+      }
+    }
+
+    function fallbackCopy(text, onOk, onFail) {
+      try {
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        var ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+        if (ok) onOk();
+        else onFail(text);
+      } catch (e) {
+        onFail(text);
+      }
+    }
+
+    // --- 4. Перехватчик TorrServer (гарантированное извлечение ссылки) ---
+    function hookTorrServer() {
+      if (!window.Lampa || !Lampa.Torrserver || Lampa.Torrserver._magnet_hooked) return;
+      Lampa.Torrserver._magnet_hooked = true;
+
+      for (var key in Lampa.Torrserver) {
+        if (typeof Lampa.Torrserver[key] === 'function') {
+          (function (methodName, origFn) {
+            Lampa.Torrserver[methodName] = function () {
+              var foundTorrent = null;
+
+              for (var i = 0; i < arguments.length; i++) {
+                var a = arguments[i];
+                if (a && typeof a === 'object') {
+                  if (a.MagnetUri || a.Link || a.magnet || a.link || a.hash || a.InfoHash) {
+                    foundTorrent = a;
+                    extractFromObject(a);
+                  }
+                }
+              }
+
+              if (window._lampa_intercept_copy) {
+                window._lampa_intercept_copy = false;
+
+                if (foundTorrent) {
+                  var magnetLink = foundTorrent.MagnetUri || foundTorrent.magnet || foundTorrent.Link || foundTorrent.link || '';
+                  var h = foundTorrent.hash || foundTorrent.Hash || foundTorrent.InfoHash || '';
+                  if (!magnetLink && h) {
+                    magnetLink = 'magnet:?xt=urn:btih:' + h + (foundTorrent.Title ? '&dn=' + encodeURIComponent(foundTorrent.Title) : '');
+                  }
+
+                  if (magnetLink) {
+                    copyToClipboard(magnetLink);
+                    return; // Блокируем показ ошибки подключения TorrServer
+                  }
+                }
+              }
+
+              return origFn.apply(this, arguments);
+            };
+          })(key, Lampa.Torrserver[key]);
         }
       }
     }
 
-    function findTorrentByNode(node) {
-      if (!node) return window._lampa_last_torrent;
-      var text = $(node).text().toLowerCase();
+    function triggerCopy(row) {
+      var $row = $(row);
+      var magnet = findMagnetForElement($row);
 
-      for (var i = 0; i < window._lampa_captured_torrents.length; i++) {
-        var item = window._lampa_captured_torrents[i];
-        var title = (item.Title || item.title || '').toLowerCase().trim();
-        if (title && (text.indexOf(title.slice(0, 18)) !== -1 || title.indexOf(text.slice(0, 18)) !== -1)) {
-          return item;
-        }
+      if (magnet) {
+        copyToClipboard(magnet);
+        return;
       }
-      return window._lampa_last_torrent;
-    }
 
-    // 1. Перехват отправки в TorrServer (Скриншот 2)
-    if (window.Lampa && Lampa.Torrserver) {
-      ['stream', 'connect', 'play'].forEach(function (method) {
-        if (typeof Lampa.Torrserver[method] === 'function') {
-          var orig_method = Lampa.Torrserver[method];
-          Lampa.Torrserver[method] = function (torrent) {
-            if (torrent) {
-              window._lampa_last_torrent = torrent;
-              saveTorrentData(torrent);
-            }
-            return orig_method.apply(this, arguments);
-          };
+      // Если в сетевом кеше не нашлось — опрашиваем строку через клик
+      hookTorrServer();
+      window._lampa_intercept_copy = true;
+      $row.trigger('hover:enter');
+
+      setTimeout(function () {
+        if (window._lampa_intercept_copy) {
+          window._lampa_intercept_copy = false;
+          copyToClipboard(findMagnetForElement($row));
         }
-      });
+      }, 400);
     }
 
-    // 2. Перехват выдачи парсеров Lampa
-    if (window.Lampa && Lampa.Parser && !Lampa.Parser._magnet_hooked) {
-      Lampa.Parser._magnet_hooked = true;
-      var orig_parser_get = Lampa.Parser.get;
-      Lampa.Parser.get = function (params, complite, error) {
-        return orig_parser_get.call(this, params, function (results) {
-          if (Array.isArray(results)) {
-            saveTorrentData(results);
-          }
-          complite(results);
-        }, error);
-      };
-    }
-
-    // 3. Добавление пункта в меню «Действие» (Скриншот 1)
-    if (window.Lampa && Lampa.Select && !Lampa.Select._magnet_hooked) {
-      Lampa.Select._magnet_hooked = true;
-      var orig_select_show = Lampa.Select.show;
+    // --- 5. Встраивание пункта в меню «Действие» (ПКМ) ---
+    if (window.Lampa && Lampa.Select && !Lampa.Select._action_magnet_hooked) {
+      Lampa.Select._action_magnet_hooked = true;
+      var origSelectShow = Lampa.Select.show;
 
       Lampa.Select.show = function (params) {
         if (params && Array.isArray(params.items)) {
           var isTorrentAction = params.items.some(function (it) {
-            var t = (it.title || '') + (it.subtitle || '');
-            return t.indexOf('торрент') !== -1 || t.indexOf('раздач') !== -1;
+            var str = (it.title || '') + ' ' + (it.subtitle || '');
+            return str.indexOf('торрент') !== -1 || str.indexOf('раздач') !== -1;
           });
 
           if (isTorrentAction) {
-            var focused = Lampa.Navigator ? Lampa.Navigator.focused() : null;
-            var targetTorrent = findTorrentByNode(focused) || window._lampa_last_torrent;
-            var magnetLink = extractMagnet(targetTorrent);
+            var activeRow = window._lampa_last_context_row || $('.torrent-item.focus, .torrent-item:hover').first();
 
-            if (magnetLink) {
-              params.items.unshift({
-                title: '🧲 Скопировать Magnet-ссылку',
-                subtitle: 'Скопировать раздачу в буфер обмена',
-                magnet_action: true
-              });
-
-              var orig_onSelect = params.onSelect;
-              params.onSelect = function (selected) {
-                if (selected.magnet_action) {
-                  copyToClipboard(magnetLink);
-                  if (Lampa.Controller) Lampa.Controller.toggle('content');
-                  return;
-                }
-                if (orig_onSelect) orig_onSelect.apply(this, arguments);
-              };
-            }
-          }
-        }
-        return orig_select_show.apply(this, arguments);
-      };
-    }
-
-    // 4. Встраивание кнопки копирования в окно ошибки TorrServer (Скриншот 2)
-    if (window.Lampa && Lampa.Modal && !Lampa.Modal._magnet_hooked) {
-      Lampa.Modal._magnet_hooked = true;
-      var orig_modal_open = Lampa.Modal.open;
-
-      Lampa.Modal.open = function (data) {
-        if (data && data.title && data.title.indexOf('подключения') !== -1) {
-          var magnet = extractMagnet(window._lampa_last_torrent);
-          if (magnet && data.html) {
-            var btnHtml = $(
-              '<div class="simple-button selector" style="' +
-                'margin: 15px 0 5px; background: #e50914; color: #fff; font-weight: bold; ' +
-                'text-align: center; padding: 12px; border-radius: 6px; cursor: pointer;' +
-              '">🧲 Скопировать Magnet этой раздачи</div>'
-            );
-
-            btnHtml.on('click', function () {
-              copyToClipboard(magnet);
+            params.items.unshift({
+              title: '🧲 Скопировать Magnet-ссылку',
+              subtitle: 'Скопировать раздачу в буфер обмена',
+              magnet_copy_action: true,
+              row: activeRow
             });
 
-            data.html.find('.modal__content, div').first().prepend(btnHtml);
+            var origOnSelect = params.onSelect;
+            params.onSelect = function (selected) {
+              if (selected.magnet_copy_action) {
+                triggerCopy(selected.row);
+                if (Lampa.Controller) Lampa.Controller.toggle('content');
+                return;
+              }
+              if (origOnSelect) origOnSelect.apply(this, arguments);
+            };
           }
         }
-        return orig_modal_open.apply(this, arguments);
+        return origSelectShow.apply(this, arguments);
       };
     }
 
-    // 5. Постоянный наблюдатель DOM для отрисовки кнопки [🧲 Magnet] в списке
+    document.addEventListener('contextmenu', function (e) {
+      var row = e.target.closest('.torrent-item');
+      if (row) window._lampa_last_context_row = row;
+    }, true);
+
+    // --- 6. Наблюдатель за появлением карточек раздач на экране ---
     var domObserver = new MutationObserver(function () {
+      hookTorrServer();
+
       $('.torrent-item').each(function () {
         var row = $(this);
-        if (row.data('has_magnet_btn')) return;
-        row.data('has_magnet_btn', true);
+        if (row.find('.torrent-item__magnet-btn').length) return;
 
         var details = row.find('.torrent-item__details');
         if (!details.length) return;
 
-        var magnetBtn = $(
-          '<span class="torrent-item__detail" style="' +
-            'cursor: pointer; color: #fff; background: rgba(255,255,255,0.18); ' +
-            'padding: 2px 7px; border-radius: 4px; font-weight: bold; margin-left: 8px;' +
+        var btn = $(
+          '<span class="torrent-item__detail torrent-item__magnet-btn" style="' +
+            'cursor: pointer; color: #fff; background: rgba(255, 255, 255, 0.22); ' +
+            'padding: 2px 8px; border-radius: 4px; font-weight: bold; margin-left: 8px;' +
           '" title="Скопировать magnet">🧲 Magnet</span>'
         );
 
-        magnetBtn.on('mouseenter', function () { $(this).css('background', 'rgba(255,255,255,0.35)'); });
-        magnetBtn.on('mouseleave', function () { $(this).css('background', 'rgba(255,255,255,0.18)'); });
+        btn.on('mouseenter', function () { $(this).css('background', 'rgba(255, 255, 255, 0.45)'); });
+        btn.on('mouseleave', function () { $(this).css('background', 'rgba(255, 255, 255, 0.22)'); });
 
-        magnetBtn.on('click', function (e) {
+        btn.on('click', function (e) {
           e.preventDefault();
           e.stopPropagation();
-          var t = findTorrentByNode(row);
-          copyToClipboard(extractMagnet(t));
+          triggerCopy(row);
         });
 
-        details.append(magnetBtn);
+        details.append(btn);
       });
     });
 
     domObserver.observe(document.body, { childList: true, subtree: true });
 
-    // Фиксация активного элемента по ПКМ
-    document.addEventListener('contextmenu', function (e) {
-      var el = e.target.closest('.torrent-item');
-      if (el) window._lampa_last_torrent = findTorrentByNode(el);
-    }, true);
-
-    // --- Оригинальная логика Jackett ByLampa ---
+    // --- 7. Оригинальная логика Jackett / JacRed ByLampa ---
     function startPlugin() {
       function add() {
         function button_click(data) {
