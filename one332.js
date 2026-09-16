@@ -361,7 +361,7 @@
 
   var ALLOHA_HOST = 'https://ab2024.ru';
 
-  // --- Перехватчик: внедрение Alloha и Torrent из cinema.js (ab2024.ru) ---
+  // --- Перехватчик: подмена Alloha и вызов торрент-модуля Lampac (pidtor) ---
   function patchBalancersData(data, reqUrl) {
     if (!data) return data;
     var list = data.online || (Array.isArray(data) ? data : null);
@@ -379,11 +379,13 @@
             item.url = item.url.replace(/https?:\/\/[^\/]+/i, ALLOHA_HOST);
           }
         }
-        if (name.indexOf('torrent') !== -1) {
+        if (name.indexOf('torrent') !== -1 || name.indexOf('pidtor') !== -1) {
           torrentFound = true;
           item.show = true;
+          item.name = 'Torrent';
           if (item.url) {
             item.url = item.url.replace(/https?:\/\/[^\/]+/i, ALLOHA_HOST);
+            item.url = item.url.replace('/lite/torrent', '/lite/pidtor');
           }
         }
       }
@@ -391,11 +393,11 @@
       var qIdx = reqUrl.indexOf('?');
       var qs = qIdx !== -1 ? reqUrl.substring(qIdx) : '';
 
-      // Добавляем Torrent и Alloha в начало списка рядом друг с другом
+      // Направляем меню Torrent на реальный рабочий эндпоинт Lampac: /lite/pidtor
       if (!torrentFound) {
         list.unshift({
           name: 'Torrent',
-          url: ALLOHA_HOST + '/lite/torrent' + qs,
+          url: ALLOHA_HOST + '/lite/pidtor' + qs,
           show: true
         });
       }
@@ -410,12 +412,13 @@
     return data;
   }
 
-  // Хук XHR
+  // Хук XHR: автоподмена путей к ab2024.ru и /lite/pidtor
   var origXOpen = XMLHttpRequest.prototype.open;
   XMLHttpRequest.prototype.open = function(method, url, async, user, pass) {
     if (typeof url === 'string') {
-      if (url.indexOf('alloha') !== -1 || url.indexOf('lite/torrent') !== -1) {
+      if (url.indexOf('alloha') !== -1 || url.indexOf('pidtor') !== -1 || url.indexOf('lite/torrent') !== -1) {
         url = url.replace(/https?:\/\/beta\.l-vid\.online/i, ALLOHA_HOST);
+        url = url.replace('/lite/torrent', '/lite/pidtor');
         if (url.indexOf('//') === -1 && url.indexOf('/') === 0) {
           url = ALLOHA_HOST + url;
         }
@@ -467,8 +470,9 @@
 
       Lampa.Reguest.prototype.silent = function(url, success, error, post, options) {
         if (typeof url === 'string') {
-          if (url.indexOf('alloha') !== -1 || url.indexOf('lite/torrent') !== -1) {
+          if (url.indexOf('alloha') !== -1 || url.indexOf('pidtor') !== -1 || url.indexOf('lite/torrent') !== -1) {
             url = url.replace(/https?:\/\/beta\.l-vid\.online/i, ALLOHA_HOST);
+            url = url.replace('/lite/torrent', '/lite/pidtor');
           }
           if (url.indexOf('beta.l-vid.online') !== -1) {
             var tok = typeof getToken === 'function' ? getToken() : '';
@@ -486,8 +490,9 @@
 
       Lampa.Reguest.prototype.native = function(url, success, error, post, options) {
         if (typeof url === 'string') {
-          if (url.indexOf('alloha') !== -1 || url.indexOf('lite/torrent') !== -1) {
+          if (url.indexOf('alloha') !== -1 || url.indexOf('pidtor') !== -1 || url.indexOf('lite/torrent') !== -1) {
             url = url.replace(/https?:\/\/beta\.l-vid\.online/i, ALLOHA_HOST);
+            url = url.replace('/lite/torrent', '/lite/pidtor');
           }
           if (url.indexOf('beta.l-vid.online') !== -1) {
             var tok = typeof getToken === 'function' ? getToken() : '';
@@ -561,7 +566,7 @@
             if (typeof title !== 'string') return title;
             if (/^alloha$/i.test(title)) return '🍍 Alloha';
             if (/^filmix(?:tv)?$/i.test(title)) return '🎬 Filmix';
-            if (/^torrent(?:s)?$/i.test(title)) return '🧲 Torrent';
+            if (/^(?:torrent(?:s)?|pidtor)$/i.test(title)) return '🧲 Torrent';
             return title;
           };
 
