@@ -361,7 +361,6 @@
 
   var ALLOHA_HOST = 'https://ab2024.ru';
 
-  // --- Перехватчик: подмена Alloha и вызов торрент-модуля Lampac (pidtor) ---
   function patchBalancersData(data, reqUrl) {
     if (!data) return data;
     var list = data.online || (Array.isArray(data) ? data : null);
@@ -393,7 +392,6 @@
       var qIdx = reqUrl.indexOf('?');
       var qs = qIdx !== -1 ? reqUrl.substring(qIdx) : '';
 
-      // Направляем меню Torrent на реальный рабочий эндпоинт Lampac: /lite/pidtor
       if (!torrentFound) {
         list.unshift({
           name: 'Torrent',
@@ -560,7 +558,7 @@
       if (typeof Lampa !== 'undefined') {
         clearInterval(timer);
 
-        // --- ЭМОДЗИ ДЛЯ ИСТОЧНИКОВ ---
+        // --- ЭМОДЗИ ДЛЯ ИСТОЧНИКОВ И УДАЛЕНИЕ ЧУЖОГО ФИЛЬТРА "VOICE" ---
         try {
           var addEmoji = function(title) {
             if (typeof title !== 'string') return title;
@@ -573,13 +571,36 @@
           if (Lampa.Filter) {
             var origFilterSet = Lampa.Filter.prototype.set;
             Lampa.Filter.prototype.set = function(type, items) {
+              var curBal = (Lampa.Storage.get('online_balanser', '') || '').toLowerCase();
+              var isTorrent = (curBal === 'torrent' || curBal === 'pidtor');
+
               if (items && Array.isArray(items)) {
+                // Если мы на балансере Torrent — удаляем категорию "Перевод" (voice) от Alloha
+                if (isTorrent) {
+                  items = items.filter(function(it) {
+                    return it.stype !== 'voice';
+                  });
+                }
                 items.forEach(function(item) {
                   if (item.title) item.title = addEmoji(item.title);
                 });
               }
               origFilterSet.call(this, type, items);
             };
+
+            var origFilterChosen = Lampa.Filter.prototype.chosen;
+            if (origFilterChosen) {
+              Lampa.Filter.prototype.chosen = function(type, text) {
+                var curBal = (Lampa.Storage.get('online_balanser', '') || '').toLowerCase();
+                var isTorrent = (curBal === 'torrent' || curBal === 'pidtor');
+                if (isTorrent && type === 'filter' && Array.isArray(text)) {
+                  text = text.filter(function(t) {
+                    return typeof t === 'string' && t.toLowerCase().indexOf('голос') === -1 && t.toLowerCase().indexOf('перевод') === -1 && t.toLowerCase().indexOf('voice') === -1;
+                  });
+                }
+                return origFilterChosen.call(this, type, text);
+              };
+            }
           }
 
           if (Lampa.Select) {
@@ -595,13 +616,32 @@
           }
         } catch(e) {}
 
-        // --- ПЕРЕХВАТ СОХРАНЕНИЯ ТОКЕНОВ В LAMPA.STORAGE ---
+        // --- ПЕРЕХВАТ СОХРАНЕНИЯ ТОКЕНОВ И СБРОС ОЗВУЧКИ ДЛЯ ТОРРЕНТА ---
         if (Lampa.Storage && !Lampa.Storage.__alcopacHooked) {
           Lampa.Storage.__alcopacHooked = true;
           var origSet = Lampa.Storage.set;
           Lampa.Storage.set = function(key, val) {
             if ((key === 'alpac_token' || key === 'lampac_token' || key === 'lampac_auth_token') && val && window.__alcopacSaveToken) {
               window.__alcopacSaveToken(val);
+            }
+            // Если переключаемся на балансер Torrent — затираем перенесенную озвучку
+            if (key === 'online_balanser') {
+              var bName = (val || '').toLowerCase();
+              if (bName === 'torrent' || bName === 'pidtor') {
+                try {
+                  var resetObj = { season: 0, voice: 0, voice_name: '', voice_url: '', voice_id: 0, episodes_view: {}, movie_view: '' };
+                  origSet.call(Lampa.Storage, 'online_choice_Torrent', resetObj);
+                  origSet.call(Lampa.Storage, 'online_choice_pidtor', resetObj);
+                } catch(e) {}
+              }
+            }
+            if (key === 'online_choice_Torrent' || key === 'online_choice_pidtor') {
+              if (val && typeof val === 'object') {
+                val.voice = 0;
+                val.voice_name = '';
+                val.voice_url = '';
+                val.voice_id = 0;
+              }
             }
             return origSet.apply(this, arguments);
           };
