@@ -35,11 +35,20 @@
         document.cookie=n+'=;path=/;max-age=0;domain=.'+d;
         var pts=d.split('.');if(pts.length>2)document.cookie=n+'=;path=/;max-age=0;domain=.'+pts.slice(-2).join('.');
       });
-    }}catch(e){}
+    }catch(e){}
     try{localStorage.removeItem(LS_TOK);}catch(e){}
   }
   function getUID(){
-    try{var raw=localStorage.getItem('lampac_unic_id');if(raw){try{var p=JSON.parse(raw);if(typeof p==='string'&&p)return p;}catch(e){if(typeof raw==='string'&&raw)return raw;}
+    try{
+      var raw=localStorage.getItem('lampac_unic_id');
+      if(raw){
+        try{
+          var p=JSON.parse(raw);
+          if(typeof p==='string'&&p)return p;
+        }catch(e){
+          if(typeof raw==='string'&&raw)return raw;
+        }
+      }
     }catch(e){}
     return '';
   }
@@ -206,7 +215,7 @@
     try{p.push(navigator.deviceMemory||0);}catch(e){}
     try{p.push(navigator.platform||'');}catch(e){}
     try{p.push(navigator.maxTouchPoints||0);}catch(e){}
-    try{Intl.DateTimeFormat().resolvedOptions().timeZone&&p.push(Intl.DateTimeFormat().resolvedOptions().timeZone);}catch(e){}
+    try{p.push(Intl.DateTimeFormat().resolvedOptions().timeZone||'');}catch(e){}
     try{p.push((navigator.userAgent||'').replace(/[\d.]+/g,'').slice(0,120));}catch(e){}
     nativeId(function(nid){cb(nid?'n:'+fnv1a(p.join('|')+'|'+nid):'');});
   }
@@ -241,43 +250,52 @@
 (function(){
   'use strict';
   var ALLOHA_HOST = 'https://ab2024.ru';
+  var extCache = {};
 
   function getActiveMovie() {
-    var act = (typeof Lampa !== 'undefined' && Lampa.Activity && Lampa.Activity.active && Lampa.Activity.active()) || {};
-    return act.movie || act.card || null;
+    try {
+      var act = (typeof Lampa !== 'undefined' && Lampa.Activity && Lampa.Activity.active && Lampa.Activity.active()) || {};
+      return act.movie || act.card || null;
+    } catch(e) {
+      return null;
+    }
   }
 
   function ensureExternalIds(movie, callback) {
-    if (!movie) return callback ? callback() : null;
-    if (movie.kinopoisk_id && movie.imdb_id) return callback ? callback() : null;
-
-    var cacheKey = 'ext_ids_' + movie.id;
-    var cached = null;
-    try { cached = JSON.parse(localStorage.getItem(cacheKey)); } catch(e){}
-    if (cached && (cached.kinopoisk_id || cached.imdb_id)) {
-      if (cached.kinopoisk_id) movie.kinopoisk_id = cached.kinopoisk_id;
-      if (cached.imdb_id) movie.imdb_id = cached.imdb_id;
-      return callback ? callback() : null;
+    if (!movie || !movie.id) {
+      if (callback) callback();
+      return;
     }
+    if (movie.kinopoisk_id) {
+      if (callback) callback();
+      return;
+    }
+    var cacheKey = 'ext_ids_' + movie.id;
+    try {
+      var cached = JSON.parse(localStorage.getItem(cacheKey) || '{}');
+      if (cached && cached.kinopoisk_id) {
+        movie.kinopoisk_id = cached.kinopoisk_id;
+        if (cached.imdb_id && !movie.imdb_id) movie.imdb_id = cached.imdb_id;
+        if (callback) callback();
+        return;
+      }
+    } catch(e) {}
 
-    var params = [
-      'id=' + encodeURIComponent(movie.id),
-      'serial=' + (movie.name || movie.number_of_seasons ? 1 : 0)
-    ];
-    if (movie.imdb_id) params.push('imdb_id=' + encodeURIComponent(movie.imdb_id));
-    if (movie.kinopoisk_id) params.push('kinopoisk_id=' + encodeURIComponent(movie.kinopoisk_id));
+    var isSerial = (movie.name || movie.number_of_seasons) ? 1 : 0;
+    var q = 'id=' + encodeURIComponent(movie.id) + '&serial=' + isSerial;
+    if (movie.imdb_id) q += '&imdb_id=' + encodeURIComponent(movie.imdb_id);
 
     var xhr = new XMLHttpRequest();
-    xhr.open('GET', ALLOHA_HOST + '/externalids?' + params.join('&'), true);
-    xhr.timeout = 4000;
+    xhr.open('GET', ALLOHA_HOST + '/externalids?' + q, true);
+    xhr.timeout = 3500;
     xhr.onload = function() {
       if (xhr.status === 200) {
         try {
           var res = JSON.parse(xhr.responseText);
           if (res) {
             if (res.kinopoisk_id) movie.kinopoisk_id = res.kinopoisk_id;
-            if (res.imdb_id) movie.imdb_id = res.imdb_id;
-            try { localStorage.setItem(cacheKey, JSON.stringify(res)); } catch(e){}
+            if (res.imdb_id && !movie.imdb_id) movie.imdb_id = res.imdb_id;
+            try { localStorage.setItem(cacheKey, JSON.stringify(res)); } catch(e) {}
           }
         } catch(e) {}
       }
@@ -314,6 +332,8 @@
     }
 
     delete params.rjson;
+    params.nojson = 'true';
+    params.source = 'tmdb';
     params.rchtype = (window.AndroidJS || (typeof Lampa !== 'undefined' && Lampa.Platform && Lampa.Platform.is && Lampa.Platform.is('android'))) ? 'apk' : 'cors';
 
     var qParts = [];
@@ -351,6 +371,10 @@
         });
       }
     }
+
+    if (typeof data === 'object' && data !== null) {
+      data['alloha'] = { show: true };
+    }
     return data;
   }
 
@@ -359,7 +383,7 @@
     if (typeof Lampa !== 'undefined' && Lampa.Listener) {
       clearInterval(initListener);
       Lampa.Listener.follow('full', function(e) {
-        if (e.type === 'complite' && e.data && e.data.movie) {
+        if (e && e.type === 'complite' && e.data && e.data.movie) {
           ensureExternalIds(e.data.movie);
         }
       });
@@ -371,9 +395,9 @@
   XMLHttpRequest.prototype.open = function(method, url, async, user, pass) {
     if (typeof url === 'string') {
       if (url.indexOf('externalids') !== -1) {
-        url = url.replace(/https?:\/\/beta\.l-vid\.online/i, ALLOHA_HOST);
-      }
-      if (url.indexOf('alloha') !== -1) {
+        var qIdx = url.indexOf('?');
+        url = ALLOHA_HOST + '/externalids' + (qIdx !== -1 ? url.substring(qIdx) : '');
+      } else if (url.indexOf('alloha') !== -1) {
         var m = getActiveMovie();
         url = buildAllohaUrl(url, m);
       }
@@ -395,6 +419,17 @@
             var str = JSON.stringify(patched);
             Object.defineProperty(self, 'responseText', { value: str, configurable: true });
             Object.defineProperty(self, 'response', { value: str, configurable: true });
+          } catch(e) {}
+        }
+      });
+    } else if (url.indexOf('externalids') !== -1) {
+      self.addEventListener('readystatechange', function() {
+        if (self.readyState === 4 && self.status === 200) {
+          try {
+            var r = JSON.parse(self.responseText);
+            var idMatch = url.match(/[?&]id=([^&]+)/);
+            var mid = idMatch ? decodeURIComponent(idMatch[1]) : '';
+            if (r && mid) extCache[mid] = r;
           } catch(e) {}
         }
       });
