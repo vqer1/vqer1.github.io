@@ -35,7 +35,7 @@
         document.cookie=n+'=;path=/;max-age=0;domain=.'+d;
         var pts=d.split('.');if(pts.length>2)document.cookie=n+'=;path=/;max-age=0;domain=.'+pts.slice(-2).join('.');
       });
-    }catch(e){}
+    }}catch(e){}
     try{localStorage.removeItem(LS_TOK);}catch(e){}
   }
   function getUID(){
