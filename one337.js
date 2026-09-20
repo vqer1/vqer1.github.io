@@ -39,17 +39,7 @@
     try{localStorage.removeItem(LS_TOK);}catch(e){}
   }
   function getUID(){
-    try{
-      var raw=localStorage.getItem('lampac_unic_id');
-      if(raw){
-        try{
-          var p=JSON.parse(raw);
-          if(typeof p==='string'&&p)return p;
-        }catch(e){
-          if(typeof raw==='string'&&raw)return raw;
-        }
-      }
-    }catch(e){}
+    try{var raw=localStorage.getItem('lampac_unic_id');if(raw){try{var p=JSON.parse(raw);if(typeof p==='string'&&p)return p;}catch(e){if(typeof raw==='string'&&raw)return raw;}}}catch(e){}
     return '';
   }
   function ensureUID(){
@@ -215,7 +205,7 @@
     try{p.push(navigator.deviceMemory||0);}catch(e){}
     try{p.push(navigator.platform||'');}catch(e){}
     try{p.push(navigator.maxTouchPoints||0);}catch(e){}
-    try{p.push(Intl.DateTimeFormat().resolvedOptions().timeZone||'');}catch(e){}
+    try{p.push(Intl.DateTimeFormat().resolvedOptions().timeZone&&p.push(Intl.DateTimeFormat().resolvedOptions().timeZone));}catch(e){}
     try{p.push((navigator.userAgent||'').replace(/[\d.]+/g,'').slice(0,120));}catch(e){}
     nativeId(function(nid){cb(nid?'n:'+fnv1a(p.join('|')+'|'+nid):'');});
   }
@@ -246,160 +236,124 @@
   }
 })();
 
-// --- Модуль синхронизации Alloha с ab2024.ru ---
+// --- Глобальные хуки балансера Alloha (ab2024.ru) ---
 (function(){
   'use strict';
   var ALLOHA_HOST = 'https://ab2024.ru';
-  var extCache = {};
 
-  function getActiveMovie() {
-    try {
-      var act = (typeof Lampa !== 'undefined' && Lampa.Activity && Lampa.Activity.active && Lampa.Activity.active()) || {};
-      return act.movie || act.card || null;
-    } catch(e) {
-      return null;
-    }
-  }
-
-  function ensureExternalIds(movie, callback) {
-    if (!movie || !movie.id) {
-      if (callback) callback();
-      return;
-    }
-    if (movie.kinopoisk_id) {
-      if (callback) callback();
-      return;
-    }
-    var cacheKey = 'ext_ids_' + movie.id;
-    try {
-      var cached = JSON.parse(localStorage.getItem(cacheKey) || '{}');
-      if (cached && cached.kinopoisk_id) {
-        movie.kinopoisk_id = cached.kinopoisk_id;
-        if (cached.imdb_id && !movie.imdb_id) movie.imdb_id = cached.imdb_id;
-        if (callback) callback();
-        return;
-      }
-    } catch(e) {}
-
-    var isSerial = (movie.name || movie.number_of_seasons) ? 1 : 0;
-    var q = 'id=' + encodeURIComponent(movie.id) + '&serial=' + isSerial;
-    if (movie.imdb_id) q += '&imdb_id=' + encodeURIComponent(movie.imdb_id);
-
-    var xhr = new XMLHttpRequest();
-    xhr.open('GET', ALLOHA_HOST + '/externalids?' + q, true);
-    xhr.timeout = 3500;
-    xhr.onload = function() {
-      if (xhr.status === 200) {
-        try {
-          var res = JSON.parse(xhr.responseText);
-          if (res) {
-            if (res.kinopoisk_id) movie.kinopoisk_id = res.kinopoisk_id;
-            if (res.imdb_id && !movie.imdb_id) movie.imdb_id = res.imdb_id;
-            try { localStorage.setItem(cacheKey, JSON.stringify(res)); } catch(e) {}
-          }
-        } catch(e) {}
-      }
-      if (callback) callback();
-    };
-    xhr.onerror = function() { if (callback) callback(); };
-    xhr.ontimeout = function() { if (callback) callback(); };
-    xhr.send();
-  }
-
-  function buildAllohaUrl(rawUrl, movie) {
-    var base = ALLOHA_HOST + '/lite/alloha';
-    var params = {};
-
-    if (rawUrl && rawUrl.indexOf('?') !== -1) {
-      var qs = rawUrl.substring(rawUrl.indexOf('?') + 1).split('&');
-      for (var i = 0; i < qs.length; i++) {
-        var pair = qs[i].split('=');
-        if (pair[0]) params[decodeURIComponent(pair[0])] = decodeURIComponent(pair[1] || '');
-      }
-    }
-
-    if (movie && typeof movie === 'object') {
-      if (movie.id && !params.id) params.id = movie.id;
-      if (movie.kinopoisk_id) params.kinopoisk_id = movie.kinopoisk_id;
-      if (movie.imdb_id) params.imdb_id = movie.imdb_id;
-      var title = movie.title || movie.name || '';
-      if (title) params.title = title;
-      var origTitle = movie.original_title || movie.original_name || '';
-      if (origTitle) params.original_title = origTitle;
-      params.serial = (movie.name || movie.number_of_seasons ? 1 : 0);
-      var year = (movie.release_date || movie.first_air_date || '').slice(0, 4);
-      if (year) params.year = year;
-    }
-
-    delete params.rjson;
-    params.nojson = 'true';
-    params.source = 'tmdb';
-    params.rchtype = (window.AndroidJS || (typeof Lampa !== 'undefined' && Lampa.Platform && Lampa.Platform.is && Lampa.Platform.is('android'))) ? 'apk' : 'cors';
-
-    var qParts = [];
-    for (var k in params) {
-      if (params.hasOwnProperty(k) && params[k] !== undefined && params[k] !== '') {
-        qParts.push(encodeURIComponent(k) + '=' + encodeURIComponent(params[k]));
-      }
-    }
-    return base + '?' + qParts.join('&');
-  }
-
+  // Патчим ТОЛЬКО структуру списка балансеров { online: [...] }
   function patchBalancersData(data, reqUrl) {
-    if (!data) return data;
-    var list = data.online || (Array.isArray(data) ? data : null);
-    if (list && Array.isArray(list)) {
-      var m = getActiveMovie();
-      var cleanUrl = buildAllohaUrl(ALLOHA_HOST + '/lite/alloha', m);
-      var allohaFound = false;
+    if (!data || typeof data !== 'object') return data;
+    if (!data.online || !Array.isArray(data.online)) return data;
 
-      for (var i = 0; i < list.length; i++) {
-        var item = list[i];
-        var name = (item.name || item.title || '').toLowerCase();
-        if (name.indexOf('alloha') !== -1) {
-          allohaFound = true;
-          item.show = true;
-          item.url = buildAllohaUrl(item.url, m);
+    var list = data.online;
+    var allohaFound = false;
+
+    for (var i = 0; i < list.length; i++) {
+      var item = list[i];
+      if (!item) continue;
+      var name = (item.name || item.title || '').toLowerCase();
+      if (name.indexOf('alloha') !== -1) {
+        allohaFound = true;
+        item.show = true;
+        if (item.url) {
+          item.url = item.url.replace(/https?:\/\/[^\/]+/i, ALLOHA_HOST);
+          item.url = item.url.replace('rjson=', 'nojson=');
+        }
+      }
+    }
+
+    if (!allohaFound) {
+      var baseQs = '';
+      for (var j = 0; j < list.length; j++) {
+        if (list[j] && list[j].url && list[j].url.indexOf('?') !== -1) {
+          baseQs = list[j].url.substring(list[j].url.indexOf('?'));
+          break;
         }
       }
 
-      if (!allohaFound) {
-        list.unshift({
-          name: 'Alloha',
-          url: cleanUrl,
-          show: true
-        });
+      var act = (typeof Lampa !== 'undefined' && Lampa.Activity && Lampa.Activity.active && Lampa.Activity.active()) || {};
+      var m = act.movie || act.card || {};
+
+      if (!baseQs && reqUrl) {
+        var qIdx = reqUrl.indexOf('?');
+        baseQs = qIdx !== -1 ? reqUrl.substring(qIdx) : '';
       }
+
+      if (m && typeof m === 'object') {
+        if (m.kinopoisk_id && baseQs.indexOf('kinopoisk_id=') === -1) {
+          baseQs += (baseQs ? '&' : '?') + 'kinopoisk_id=' + encodeURIComponent(m.kinopoisk_id);
+        }
+        if (m.imdb_id && baseQs.indexOf('imdb_id=') === -1) {
+          baseQs += (baseQs ? '&' : '?') + 'imdb_id=' + encodeURIComponent(m.imdb_id);
+        }
+        var t = m.title || m.name || '';
+        if (t && baseQs.indexOf('title=') === -1) {
+          baseQs += (baseQs ? '&' : '?') + 'title=' + encodeURIComponent(t);
+        }
+        var ot = m.original_title || m.original_name || '';
+        if (ot && baseQs.indexOf('original_title=') === -1) {
+          baseQs += (baseQs ? '&' : '?') + 'original_title=' + encodeURIComponent(ot);
+        }
+        if (baseQs.indexOf('serial=') === -1) {
+          baseQs += (baseQs ? '&' : '?') + 'serial=' + (m.name ? '1' : '0');
+        }
+        var y = (m.release_date || m.first_air_date || '').slice(0, 4);
+        if (y && baseQs.indexOf('year=') === -1) {
+          baseQs += (baseQs ? '&' : '?') + 'year=' + y;
+        }
+      }
+
+      if (baseQs) {
+        baseQs = baseQs.replace('rjson=', 'nojson=');
+      }
+
+      list.unshift({
+        name: 'Alloha',
+        url: ALLOHA_HOST + '/lite/alloha' + (baseQs || ''),
+        show: true
+      });
     }
 
-    if (typeof data === 'object' && data !== null) {
-      data['alloha'] = { show: true };
-    }
     return data;
   }
 
-  // Предзагрузка kinopoisk_id в момент открытия любой карточки фильма
-  var initListener = setInterval(function() {
-    if (typeof Lampa !== 'undefined' && Lampa.Listener) {
-      clearInterval(initListener);
-      Lampa.Listener.follow('full', function(e) {
-        if (e && e.type === 'complite' && e.data && e.data.movie) {
-          ensureExternalIds(e.data.movie);
-        }
-      });
-    }
-  }, 100);
+  function isBalancerListUrl(url) {
+    return typeof url === 'string' && (url.indexOf('withsearch') !== -1 || url.indexOf('events') !== -1);
+  }
 
-  // Перехват XHR
+  // Перехват XHR: подмена адресов Alloha и externalids на ab2024.ru
   var origXOpen = XMLHttpRequest.prototype.open;
   XMLHttpRequest.prototype.open = function(method, url, async, user, pass) {
     if (typeof url === 'string') {
       if (url.indexOf('externalids') !== -1) {
-        var qIdx = url.indexOf('?');
-        url = ALLOHA_HOST + '/externalids' + (qIdx !== -1 ? url.substring(qIdx) : '');
-      } else if (url.indexOf('alloha') !== -1) {
-        var m = getActiveMovie();
-        url = buildAllohaUrl(url, m);
+        url = url.replace(/https?:\/\/beta\.l-vid\.online/i, ALLOHA_HOST);
+      }
+      if (url.indexOf('alloha') !== -1) {
+        url = url.replace(/https?:\/\/beta\.l-vid\.online/i, ALLOHA_HOST);
+        url = url.replace('rjson=', 'nojson=');
+        if (url.indexOf('//') === -1 && url.indexOf('/') === 0) {
+          url = ALLOHA_HOST + url;
+        }
+
+        // Не подмешиваем ID старой карточки, если выполняется уточнение или поиск другого фильма
+        var isClarify = url.indexOf('clarify') !== -1 || url.indexOf('search=') !== -1 || url.indexOf('query=') !== -1;
+        if (!isClarify) {
+          var act2 = (typeof Lampa !== 'undefined' && Lampa.Activity && Lampa.Activity.active && Lampa.Activity.active()) || {};
+          var m2 = act2.movie || act2.card || {};
+          if (m2 && typeof m2 === 'object') {
+            if (m2.kinopoisk_id && url.indexOf('kinopoisk_id=') === -1) {
+              url += (url.indexOf('?') >= 0 ? '&' : '?') + 'kinopoisk_id=' + encodeURIComponent(m2.kinopoisk_id);
+            }
+            if (m2.imdb_id && url.indexOf('imdb_id=') === -1) {
+              url += (url.indexOf('?') >= 0 ? '&' : '?') + 'imdb_id=' + encodeURIComponent(m2.imdb_id);
+            }
+            var t2 = m2.title || m2.name || '';
+            if (t2 && url.indexOf('title=') === -1) {
+              url += (url.indexOf('?') >= 0 ? '&' : '?') + 'title=' + encodeURIComponent(t2);
+            }
+          }
+        }
       }
     }
     this._reqUrl = url;
@@ -410,7 +364,7 @@
   XMLHttpRequest.prototype.send = function(body) {
     var self = this;
     var url = this._reqUrl || '';
-    if (url.indexOf('withsearch') !== -1 || url.indexOf('events') !== -1) {
+    if (isBalancerListUrl(url)) {
       self.addEventListener('readystatechange', function() {
         if (self.readyState === 4 && self.status === 200) {
           try {
@@ -422,22 +376,11 @@
           } catch(e) {}
         }
       });
-    } else if (url.indexOf('externalids') !== -1) {
-      self.addEventListener('readystatechange', function() {
-        if (self.readyState === 4 && self.status === 200) {
-          try {
-            var r = JSON.parse(self.responseText);
-            var idMatch = url.match(/[?&]id=([^&]+)/);
-            var mid = idMatch ? decodeURIComponent(idMatch[1]) : '';
-            if (r && mid) extCache[mid] = r;
-          } catch(e) {}
-        }
-      });
     }
     return origXSend.call(this, body);
   };
 
-  // Хуки интерфейса Lampa (Alloha, отложенный поиск и эмодзи)
+  // Хуки запросов Lampa
   var hookInterval = setInterval(function() {
     if (typeof Lampa === 'undefined') return;
     clearInterval(hookInterval);
@@ -446,72 +389,38 @@
       var origSilent = Lampa.Reguest.prototype.silent;
       var origNative = Lampa.Reguest.prototype.native;
 
-      function handleReq(fn, context, args) {
-        var url = args[0];
-        var success = args[1];
-        var error = args[2];
-        var post = args[3];
-        var options = args[4];
-
-        if (typeof url === 'string' && url.indexOf('alloha') !== -1) {
-          var m = getActiveMovie();
-          ensureExternalIds(m, function() {
-            var cleanUrl = buildAllohaUrl(url, m);
-            var wrappedSuccess = function(res) {
-              var patched = patchBalancersData(res, cleanUrl);
-              if (success) success(patched);
-            };
-            fn.call(context, cleanUrl, wrappedSuccess, error, post, options);
-          });
-          return;
+      Lampa.Reguest.prototype.silent = function(url, success, error, post, options) {
+        if (typeof url === 'string') {
+          if (url.indexOf('externalids') !== -1) {
+            url = url.replace(/https?:\/\/beta\.l-vid\.online/i, ALLOHA_HOST);
+          }
+          if (url.indexOf('alloha') !== -1) {
+            url = url.replace(/https?:\/\/beta\.l-vid\.online/i, ALLOHA_HOST);
+            url = url.replace('rjson=', 'nojson=');
+          }
         }
-
-        if (typeof url === 'string' && url.indexOf('externalids') !== -1) {
-          url = url.replace(/https?:\/\/beta\.l-vid\.online/i, ALLOHA_HOST);
-          args[0] = url;
-        }
-        return fn.apply(context, args);
-      }
-
-      Lampa.Reguest.prototype.silent = function() {
-        return handleReq(origSilent, this, arguments);
+        var wrappedSuccess = function(res) {
+          var patched = isBalancerListUrl(url) ? patchBalancersData(res, url || '') : res;
+          if (success) success(patched);
+        };
+        return origSilent.call(this, url, wrappedSuccess, error, post, options);
       };
 
-      Lampa.Reguest.prototype.native = function() {
-        return handleReq(origNative, this, arguments);
-      };
-    }
-
-    var addEmoji = function(title) {
-      if (typeof title !== 'string') return title;
-      if (/^alloha$/i.test(title)) return '🍍 Alloha';
-      if (/^filmix(?:tv)?$/i.test(title)) return '🎬 Filmix';
-      return title;
-    };
-
-    if (Lampa.Filter && !Lampa.Filter.__alcopacEmoji) {
-      Lampa.Filter.__alcopacEmoji = true;
-      var origFilterSet = Lampa.Filter.prototype.set;
-      Lampa.Filter.prototype.set = function(type, items) {
-        if (items && Array.isArray(items)) {
-          items.forEach(function(item) {
-            if (item.title) item.title = addEmoji(item.title);
-          });
+      Lampa.Reguest.prototype.native = function(url, success, error, post, options) {
+        if (typeof url === 'string') {
+          if (url.indexOf('externalids') !== -1) {
+            url = url.replace(/https?:\/\/beta\.l-vid\.online/i, ALLOHA_HOST);
+          }
+          if (url.indexOf('alloha') !== -1) {
+            url = url.replace(/https?:\/\/beta\.l-vid\.online/i, ALLOHA_HOST);
+            url = url.replace('rjson=', 'nojson=');
+          }
         }
-        origFilterSet.call(this, type, items);
-      };
-    }
-
-    if (Lampa.Select && !Lampa.Select.__alcopacEmoji) {
-      Lampa.Select.__alcopacEmoji = true;
-      var origSelectShow = Lampa.Select.show;
-      Lampa.Select.show = function(params) {
-        if (params && params.items) {
-          params.items.forEach(function(item) {
-            if (item.title) item.title = addEmoji(item.title);
-          });
-        }
-        origSelectShow.call(this, params);
+        var wrappedSuccess = function(res) {
+          var patched = isBalancerListUrl(url) ? patchBalancersData(res, url || '') : res;
+          if (success) success(patched);
+        };
+        return origNative.call(this, url, wrappedSuccess, error, post, options);
       };
     }
   }, 50);
