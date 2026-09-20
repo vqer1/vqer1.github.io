@@ -74,7 +74,7 @@
     try{parts.push('mem:'+(navigator.deviceMemory||0));}catch(e){}
     try{parts.push('touch:'+(navigator.maxTouchPoints||0));}catch(e){}
     try{
-      var c=document.createElement('canvas');var gl=c.getContext('webgl')||c.getContext('experimentalwebgl');
+      var c=document.createElement('canvas');var gl=c.getContext('webgl')||c.getContext('experimental-webgl');
       if(gl){
         var dbg=gl.getExtension('WEBGL_debug_renderer_info');
         if(dbg){parts.push('glv:'+gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL));parts.push('glr:'+gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL));}
@@ -241,41 +241,49 @@
   'use strict';
   var ALLOHA_HOST = 'https://ab2024.ru';
 
-  function fixAllohaUrl(url) {
-    if (typeof url !== 'string' || url.indexOf('alloha') === -1) return url;
-    var res = url.replace(/https?:\/\/[^\/]+/i, ALLOHA_HOST);
-    if (res.indexOf('//') === -1 && res.indexOf('/') === 0) {
-      res = ALLOHA_HOST + res;
+  // Проверка: является ли список массивом файлов/серий/потоков
+  function isMediaStreamList(list) {
+    if (!Array.isArray(list) || list.length === 0) return false;
+    var first = list[0];
+    if (!first || typeof first !== 'object') return false;
+    if (first.file || first.stream || first.quality || first.timeline || first.folder || first.seasons || first.episodes || first.subtitles || first.voice_name) {
+      return true;
     }
-    // Гарантируем JSON-ответ для корректной работы дерева поиска и фильтров
-    res = res.replace('nojson=', 'rjson=');
-    if (res.indexOf('rjson=') === -1) {
-      res += (res.indexOf('?') >= 0 ? '&' : '?') + 'rjson=true';
-    }
-    return res;
+    return false;
   }
 
+  // Патчим ТОЛЬКО общий список балансеров
   function patchBalancersData(data, reqUrl) {
     if (!data || typeof data !== 'object') return data;
-    var list = data.online;
+
+    // Игнорируем запросы к конкретным балансерам/файлам, чтобы не внедрять Alloha в чужие списки
+    if (typeof reqUrl === 'string') {
+      var lowerUrl = reqUrl.toLowerCase();
+      if (lowerUrl.indexOf('balancer=') !== -1 || lowerUrl.indexOf('source=') !== -1 ||
+          lowerUrl.indexOf('/lite/alloha') !== -1 || lowerUrl.indexOf('/lite/rezka') !== -1 ||
+          lowerUrl.indexOf('/lite/filmix') !== -1) {
+        return data;
+      }
+    }
+
+    var list = data.online || (Array.isArray(data) ? data : null);
     if (!list || !Array.isArray(list)) return data;
+
+    // Если это список видеопотоков или серий — категорически не трогаем его
+    if (isMediaStreamList(list)) return data;
 
     var allohaFound = false;
 
     for (var i = 0; i < list.length; i++) {
       var item = list[i];
-      if (!item) continue;
+      if (!item || typeof item !== 'object') continue;
       var name = (item.name || item.title || '').toLowerCase();
       if (name.indexOf('alloha') !== -1) {
         allohaFound = true;
         item.show = true;
-        item.search = true;
-        item.clarify = true;
-        // Очищаем заголовок от залипшей приписки WEB-DL
-        item.title = 'Alloha';
-        delete item.quality;
+        item.clarify = true; // Разрешаем меню "Уточнить"
         if (item.url) {
-          item.url = fixAllohaUrl(item.url);
+          item.url = item.url.replace(/https?:\/\/[^\/]+/i, ALLOHA_HOST);
         }
       }
     }
@@ -289,13 +297,12 @@
         }
       }
 
+      if (!baseQs && reqUrl && reqUrl.indexOf('?') !== -1) {
+        baseQs = reqUrl.substring(reqUrl.indexOf('?'));
+      }
+
       var act = (typeof Lampa !== 'undefined' && Lampa.Activity && Lampa.Activity.active && Lampa.Activity.active()) || {};
       var m = act.movie || act.card || {};
-
-      if (!baseQs && reqUrl) {
-        var qIdx = reqUrl.indexOf('?');
-        baseQs = qIdx !== -1 ? reqUrl.substring(qIdx) : '';
-      }
 
       if (m && typeof m === 'object') {
         if (m.kinopoisk_id && baseQs.indexOf('kinopoisk_id=') === -1) {
@@ -321,15 +328,12 @@
         }
       }
 
-      var fullUrl = ALLOHA_HOST + '/lite/alloha' + (baseQs || '');
-      fullUrl = fixAllohaUrl(fullUrl);
-
-      list.unshift({
-        name: 'Alloha',
+      // Добавляем Alloha в конец списка доступных источников, не перетирая выбранный балансер
+      list.push({
+        name: 'alloha',
         title: 'Alloha',
-        url: fullUrl,
+        url: ALLOHA_HOST + '/lite/alloha' + (baseQs || ''),
         show: true,
-        search: true,
         clarify: true
       });
     }
@@ -337,17 +341,18 @@
     return data;
   }
 
-  function isBalancerListUrl(url) {
-    return typeof url === 'string' && (url.indexOf('withsearch') !== -1 || url.indexOf('events') !== -1 || url.indexOf('/lite') !== -1);
-  }
-
-  // Перехват XHR
+  // Перехват XHR: только маршрутизация доменов, без перезаписи параметров поиска
   var origXOpen = XMLHttpRequest.prototype.open;
   XMLHttpRequest.prototype.open = function(method, url, async, user, pass) {
     if (typeof url === 'string') {
-      // Запросы externalids оставляем на основном сервере, не перенаправляя на ab2024.ru
-      if (url.indexOf('alloha') !== -1) {
-        url = fixAllohaUrl(url);
+      if (url.indexOf('externalids') !== -1) {
+        url = url.replace(/https?:\/\/beta\.l-vid\.online/i, ALLOHA_HOST);
+      }
+      if (url.indexOf('/lite/alloha') !== -1 || url.indexOf('balancer=alloha') !== -1) {
+        url = url.replace(/https?:\/\/beta\.l-vid\.online/i, ALLOHA_HOST);
+        if (url.indexOf('//') === -1 && url.indexOf('/') === 0) {
+          url = ALLOHA_HOST + url;
+        }
       }
     }
     this._reqUrl = url;
@@ -358,82 +363,67 @@
   XMLHttpRequest.prototype.send = function(body) {
     var self = this;
     var url = this._reqUrl || '';
-    if (isBalancerListUrl(url)) {
-      self.addEventListener('readystatechange', function() {
-        if (self.readyState === 4 && self.status === 200) {
-          try {
-            var parsed = JSON.parse(self.responseText);
-            var patched = patchBalancersData(parsed, url);
-            var str = JSON.stringify(patched);
-            Object.defineProperty(self, 'responseText', { value: str, configurable: true });
-            Object.defineProperty(self, 'response', { value: str, configurable: true });
-          } catch(e) {}
-        }
-      });
-    }
+    self.addEventListener('readystatechange', function() {
+      if (self.readyState === 4 && self.status === 200) {
+        try {
+          var parsed = JSON.parse(self.responseText);
+          var patched = patchBalancersData(parsed, url);
+          var str = JSON.stringify(patched);
+          Object.defineProperty(self, 'responseText', { value: str, configurable: true });
+          Object.defineProperty(self, 'response', { value: str, configurable: true });
+        } catch(e) {}
+      }
+    });
     return origXSend.call(this, body);
   };
 
-  // Хуки для сетевых запросов и фильтров интерфейса Lampa
+  // Хуки встроенных запросов Lampa
   var hookInterval = setInterval(function() {
     if (typeof Lampa === 'undefined') return;
     clearInterval(hookInterval);
-
-    // Удаление остаточной полоски Alloha WEB-DL из фильтров
-    if (Lampa.Filter && !Lampa.Filter.__alcopacCleaned) {
-      Lampa.Filter.__alcopacCleaned = true;
-      var origFilterSet = Lampa.Filter.prototype.set;
-      Lampa.Filter.prototype.set = function(name, items) {
-        if (Array.isArray(items)) {
-          for (var i = items.length - 1; i >= 0; i--) {
-            var it = items[i];
-            if (it && typeof it.title === 'string' && /alloha\s+web-dl/i.test(it.title.trim())) {
-              items.splice(i, 1);
-            }
-          }
-        }
-        return origFilterSet.call(this, name, items);
-      };
-    }
 
     if (Lampa.Reguest) {
       var origSilent = Lampa.Reguest.prototype.silent;
       var origNative = Lampa.Reguest.prototype.native;
 
       Lampa.Reguest.prototype.silent = function(url, success, error, post, options) {
-        if (typeof url === 'string' && url.indexOf('alloha') !== -1) {
-          url = fixAllohaUrl(url);
+        if (typeof url === 'string') {
+          if (url.indexOf('externalids') !== -1) {
+            url = url.replace(/https?:\/\/beta\.l-vid\.online/i, ALLOHA_HOST);
+          }
+          if (url.indexOf('/lite/alloha') !== -1 || url.indexOf('balancer=alloha') !== -1) {
+            url = url.replace(/https?:\/\/beta\.l-vid\.online/i, ALLOHA_HOST);
+            if (url.indexOf('//') === -1 && url.indexOf('/') === 0) {
+              url = ALLOHA_HOST + url;
+            }
+          }
         }
         var wrappedSuccess = function(res) {
-          var patched = isBalancerListUrl(url) ? patchBalancersData(res, url || '') : res;
+          var patched = patchBalancersData(res, url || '');
           if (success) success(patched);
         };
         return origSilent.call(this, url, wrappedSuccess, error, post, options);
       };
 
       Lampa.Reguest.prototype.native = function(url, success, error, post, options) {
-        if (typeof url === 'string' && url.indexOf('alloha') !== -1) {
-          url = fixAllohaUrl(url);
+        if (typeof url === 'string') {
+          if (url.indexOf('externalids') !== -1) {
+            url = url.replace(/https?:\/\/beta\.l-vid\.online/i, ALLOHA_HOST);
+          }
+          if (url.indexOf('/lite/alloha') !== -1 || url.indexOf('balancer=alloha') !== -1) {
+            url = url.replace(/https?:\/\/beta\.l-vid\.online/i, ALLOHA_HOST);
+            if (url.indexOf('//') === -1 && url.indexOf('/') === 0) {
+              url = ALLOHA_HOST + url;
+            }
+          }
         }
         var wrappedSuccess = function(res) {
-          var patched = isBalancerListUrl(url) ? patchBalancersData(res, url || '') : res;
+          var patched = patchBalancersData(res, url || '');
           if (success) success(patched);
         };
         return origNative.call(this, url, wrappedSuccess, error, post, options);
       };
     }
-
-    // Автоматическая очистка фантомных вкладок из DOM-дерева
-    setInterval(function() {
-      try {
-        var elements = document.querySelectorAll('.filter__item, .navigation-tabs__button');
-        for (var i = 0; i < elements.length; i++) {
-          if (/alloha\s+web-dl/i.test((elements[i].textContent || '').trim())) {
-            elements[i].remove();
-          }
-        }
-      } catch(e) {}
-    }, 400);
   }, 50);
 })();
 
