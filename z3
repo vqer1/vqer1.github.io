@@ -1,8 +1,8 @@
 (function() {
   'use strict';
 
-  // ===== 1. СИСТЕМА ОФЛАЙН-ЛИЦЕНЗИРОВАНИЯ =====
-  var LIC_SALT = "Z01_SALT_2026_SHORT";
+  // ===== СИСТЕМА ЛИЦЕНЗИРОВАНИЯ =====
+  var LIC_SALT = "Z01_SALT_2026_V5";
 
   function licHash(s) {
     var h = 5381;
@@ -13,7 +13,7 @@
     return Math.abs(h).toString(16).toUpperCase();
   }
 
-  // Фиксированный ID телевизора (НЕ СБРАСЫВАЕТСЯ при сбросе демо z01)
+  // Фиксированный 6-значный ID телевизора (НЕ СБРАСЫВАЕТСЯ при сбросах демо)
   function getMyDeviceId() {
     var id = Lampa.Storage.get('z01_my_dev_id', '');
     if (!id) {
@@ -23,21 +23,21 @@
     return id;
   }
 
-  // Проверка ключа формата ГГММДД-ХХХХ (11 символов)
+  // Проверка ключа формата ГГММДД-ХХХХХ (ровно 5 символов после дефиса)
   function verifyLicense() {
     var key = (Lampa.Storage.get('z01_license_key', '') || '').trim().toUpperCase();
     if (!key) return { active: false, msg: 'Ключ не введен' };
 
-    var match = key.match(/^(\d{2})(\d{2})(\d{2})-([A-F0-9]{4})$/);
+    var match = key.match(/^(\d{2})(\d{2})(\d{2})-([A-F0-9]{5})$/);
     if (!match) return { active: false, msg: 'Неверный формат ключа' };
 
     var datePart = match[1] + match[2] + match[3];
     var signPart = match[4];
     var myDev = getMyDeviceId();
 
-    var expectedSign = ('0000' + licHash(myDev + datePart + LIC_SALT)).slice(-4);
+    var expectedSign = ('00000' + licHash(myDev + datePart + LIC_SALT)).slice(-5);
     if (signPart !== expectedSign) {
-      return { active: false, msg: 'Ключ от другого устройства' };
+      return { active: false, msg: 'Ключ выписан для другого устройства' };
     }
 
     var year = 2000 + parseInt(match[1], 10);
@@ -78,7 +78,7 @@
     }
   }
 
-  // ===== 2. АВТОСБРОС И РОТАЦИЯ ТРИАЛА Z01 =====
+  // ===== АВТОМАТИЧЕСКИЙ СБРОС И РОТАЦИЯ ТРИАЛА Z01 =====
   var ZPREM_SERVER = (Lampa.Utils && Lampa.Utils.protocol ? Lampa.Utils.protocol() : 'http://') + 'prem.z01.online/';
   var ZPREM_TRIAL_URL = (Lampa.Utils && Lampa.Utils.protocol ? Lampa.Utils.protocol() : 'http://') + 'oplata.z01.online/trial.php';
 
@@ -171,7 +171,7 @@
     });
   }
 
-  // ===== 3. ES5 ПОЛИФИЛЫ =====
+  // ===== ES5 ПОЛИФИЛЫ =====
   if (!Array.prototype.find) {
     Array.prototype.find = function(callback, thisArg) {
       for (var i = 0; i < this.length; i++) {
@@ -207,7 +207,7 @@
     };
   }
 
-  // ===== 4. ВЫБОР СЕРВЕРОВ Z01 =====
+  // ===== СЕРВЕРЫ Z01 =====
   var Z01_SERVERS = ['http://s1.z01.online/', 'http://s2.z01.online/', 'http://s3.z01.online/'];
   var Z01_FALLBACK = 'http://z01.online/';
 
@@ -338,45 +338,7 @@
 
   var Network = Lampa.Reguest;
 
-  // ===== 5. МОДУЛЬ ИНТЕРФЕЙСА Z01UI =====
-  var Z01UI = {};
-  Z01UI.enabled = function() { return Lampa.Storage.get('z01_ui_mode', 'modern') !== 'classic'; };
-  Z01UI.REQUEST_TIMEOUT = 20000;
-  Z01UI.WATCHDOG = 24;
-
-  Z01UI.esc = function(str) {
-    return (str === undefined || str === null ? '' : String(str))
-      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-  };
-
-  Z01UI.shortQuality = function(text) {
-    if (!text) return '';
-    var match = String(text).match(/(2160|1440|1080|720|576|480)\s*p?/i);
-    if (match) {
-      var v = parseInt(match[1]);
-      if (v >= 2160) return '4K';
-      if (v >= 1080) return 'FHD';
-      if (v >= 720) return 'HD';
-      return 'SD';
-    }
-    if (/4k|uhd/i.test(text)) return '4K';
-    if (/fhd/i.test(text)) return 'FHD';
-    return '';
-  };
-
-  Z01UI.isSeasonLabel = function(text) {
-    text = String(text || '').trim();
-    return /^\d+\s*(-?[йя])?\s*(сезон|season)$/i.test(text) || /^(сезон|season)\s*\d+$/i.test(text);
-  };
-
-  Z01UI.seasonNumber = function(title) {
-    var match = String(title || '').match(/\d+/);
-    return match ? parseInt(match[0]) : 0;
-  };
-
-  Z01UI.css = "<style>.mo{padding:0 0 3em 0}.mo-head{display:flex;align-items:center;padding:0 .2em .7em .2em}.mo-head__title{font-size:1.7em;font-weight:600;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.mo-head__note{font-size:1.05em;opacity:.7;padding-left:1em}.mo-panel{display:flex;flex-wrap:wrap;margin:0 0 1.3em 0}.mo-seg{position:relative;min-width:10em;padding:.6em 1.5em .6em 1em;margin:0 .8em .6em 0;background:rgba(255,255,255,.08);border-radius:.35em}.mo-seg.focus{background:#fff;color:#000}.mo-tiles{display:flex;flex-wrap:wrap;margin:0 -.45em}.mo-tile{width:25%;padding:0 .45em 1.1em .45em}.mo-tile__art{position:relative;padding-top:56%;background:rgba(255,255,255,.08);border-radius:.4em;overflow:hidden}.mo-tile__art img{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover}.mo-tile.focus .mo-tile__art{box-shadow:0 0 0 .2em #fff}.mo-tile__title{font-size:1.05em;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;padding-top:.4em}.mo-line{display:flex;align-items:center;padding:.8em 1em;margin-bottom:.45em;background:rgba(255,255,255,.06);border-radius:.4em;cursor:pointer}.mo-line.focus{background:#fff;color:#000}@media screen and (max-width:900px){.mo-tile{width:50%}}</style>";
-
-  // ===== 6. ОСНОВНОЙ КОМПОНЕНТ ПЛЕЕРА И КАТАЛОГА =====
+  // ===== ОСНОВНОЙ КОМПОНЕНТ ДВИЖКА =====
   function component(object) {
     var network = new Network();
     var scroll = new Lampa.Scroll({ mask: true, over: true });
@@ -387,29 +349,16 @@
     var source;
     var balanser;
     var initialized;
-    var balanser_timer;
-    var images = [];
-    var number_of_requests = 0;
     var filter_sources = [];
     var filter_find = { season: [], voice: [] };
-    var modern = Z01UI.enabled();
-    var ui = {};
-    var ui_items = [];
+    var life_wait_times = 0;
+    var life_wait_timer;
 
-    this.uiFrame = function() {
-      if (!ui.root) {
-        ui.root = $('<div class="mo"></div>');
-        ui.status = $('<div class="mo__status"></div>');
-        ui.panel = $('<div class="mo__panel"></div>');
-        ui.list = $('<div class="mo-list"></div>');
-        ui.root.append(ui.status).append(ui.panel).append(ui.list);
-      }
-      if (!ui.root.parent().length) {
-        scroll.clear();
-        scroll.append(ui.root);
-      }
-      return ui.root;
-    };
+    function balanserName(j) {
+      var bals = j.balanser;
+      var name = j.name.split(' ')[0];
+      return (bals || name).toLowerCase();
+    }
 
     this.initialize = function() {
       var _this = this;
@@ -434,12 +383,6 @@
       files.appendFiles(scroll.render());
       files.appendHead(filter.render());
       scroll.minus(files.render().find('.explorer__files-head'));
-      if (modern) {
-        files.render().find('.explorer__files-head').css('display', 'none');
-        this.uiFrame();
-      } else {
-        scroll.body().append(Lampa.Template.get('lampac_content_loading'));
-      }
       Lampa.Controller.enable('content');
       this.loading(false);
 
@@ -491,30 +434,83 @@
       return url + (url.indexOf('?') >= 0 ? '&' : '?') + query.join('&');
     };
 
-    this.createSource = function() {
+    // БЕЗОПАСНАЯ ОБРАБОТКА ИСТОЧНИКОВ: исключает ошибку json.forEach is not a function
+    this.startSource = function(json) {
       var _this = this;
       return new Promise(function(resolve, reject) {
-        var url = _this.requestParams(Defined.localhost + 'lite/events?life=true');
+        var list = [];
+        if (Array.isArray(json)) list = json;
+        else if (json && Array.isArray(json.online)) list = json.online;
+
+        list.forEach(function(j) {
+          var name = balanserName(j);
+          sources[name] = { url: j.url, name: j.name, show: typeof j.show == 'undefined' ? true : j.show };
+          syncBalanser(name);
+        });
+
+        filter_sources = Lampa.Arrays.getKeys(sources);
+        ['Filmix 4K VIP', 'HDRezka 4K VIP', 'KinoPub 4K VIP', 'Alloha 4K VIP'].forEach(function(n) {
+          var k = 'vip_' + n.toLowerCase().replace(/\s/g, '_');
+          if (!sources[k]) {
+            sources[k] = { name: n + ' [VIP]', url: '', show: true, vip: true };
+            filter_sources.push(k);
+          }
+        });
+
+        if (filter_sources.length) {
+          balanser = filter_sources[0];
+          source = sources[balanser].url;
+          resolve(json);
+        } else {
+          reject();
+        }
+      });
+    };
+
+    // Опрос сервера при life=true
+    this.lifeSource = function() {
+      var _this3 = this;
+      return new Promise(function(resolve, reject) {
+        var url = _this3.requestParams(Defined.localhost + 'lifeevents?memkey=' + (_this3.memkey || ''));
+        var fin = function() {
+          network.timeout(3000);
+          network.silent(account(url), function(json) {
+            life_wait_times++;
+            if (json && Array.isArray(json.online) && json.online.length) {
+              resolve(json.online);
+            } else if (life_wait_times > 15 || (json && json.ready)) {
+              if (json && Array.isArray(json.online)) resolve(json.online);
+              else reject();
+            } else {
+              life_wait_timer = setTimeout(fin, 1000);
+            }
+          }, function() {
+            life_wait_times++;
+            if (life_wait_times > 15) reject();
+            else life_wait_timer = setTimeout(fin, 1000);
+          }, false, {
+            headers: {'X-Kit-AesGcm': Lampa.Storage.get('aesgcmkey', ''), 'X-Zprem-Key': Lampa.Storage.get('zpremkey', '')}
+          });
+        };
+        fin();
+      });
+    };
+
+    this.createSource = function() {
+      var _this4 = this;
+      return new Promise(function(resolve, reject) {
+        var url = _this4.requestParams(Defined.localhost + 'lite/events?life=true');
         network.timeout(15000);
         network.silent(account(url), function(json) {
-          json.forEach(function(j) {
-            var n = (j.balanser || j.name.split(' ')[0]).toLowerCase();
-            sources[n] = { url: j.url, name: j.name, show: j.show };
-            syncBalanser(n);
-          });
-          filter_sources = Lampa.Arrays.getKeys(sources);
-          ['Filmix 4K VIP', 'HDRezka 4K VIP', 'KinoPub 4K VIP', 'Alloha 4K VIP'].forEach(function(n) {
-            var k = 'vip_' + n.toLowerCase().replace(/\s/g, '_');
-            if (!sources[k]) {
-              sources[k] = { name: n, url: '', show: true, vip: true };
-              filter_sources.push(k);
-            }
-          });
-          if (filter_sources.length) {
-            balanser = filter_sources[0];
-            source = sources[balanser].url;
-            resolve();
-          } else reject();
+          if (typeof json === 'string') json = Lampa.Arrays.decodeJson(json, {});
+          if (!json || json.accsdb) return reject(json);
+          
+          if (json.life) {
+            _this4.memkey = json.memkey;
+            _this4.lifeSource().then(_this4.startSource).then(resolve)['catch'](reject);
+          } else {
+            _this4.startSource(json).then(resolve)['catch'](reject);
+          }
         }, reject, false, {
           headers: {'X-Kit-AesGcm': Lampa.Storage.get('aesgcmkey', ''), 'X-Zprem-Key': Lampa.Storage.get('zpremkey', '')}
         });
@@ -532,14 +528,11 @@
 
     this.request = function(url) {
       var _this = this;
-      number_of_requests++;
-      if (number_of_requests < 10) {
-        network.timeout(20000);
-        network['native'](account(url), function(str) { _this.parse(str); }, function() { _this.empty(); }, false, {
-          dataType: 'text',
-          headers: {'X-Kit-AesGcm': Lampa.Storage.get('aesgcmkey', ''), 'X-Zprem-Key': Lampa.Storage.get('zpremkey', '')}
-        });
-      } else this.empty();
+      network.timeout(20000);
+      network['native'](account(url), function(str) { _this.parse(str); }, function() { _this.empty(); }, false, {
+        dataType: 'text',
+        headers: {'X-Kit-AesGcm': Lampa.Storage.get('aesgcmkey', ''), 'X-Zprem-Key': Lampa.Storage.get('zpremkey', '')}
+      });
     };
 
     this.parseJsonDate = function(str, name) {
@@ -587,10 +580,14 @@
         var items = this.parseJsonDate(str, '.videos__item');
         var buttons = this.parseJsonDate(str, '.videos__button');
 
-        var season_buttons = buttons.filter(function(b) { return Z01UI.isSeasonLabel(b.text); });
+        var season_buttons = buttons.filter(function(b) {
+          return /^\d+\s*(-?[йя])?\s*(сезон|season)$/i.test(b.text || '') || /^(сезон|season)\s*\d+$/i.test(b.text || '');
+        });
         if (season_buttons.length > 1) {
           filter_find.season = season_buttons.map(function(b) { return { title: b.text, url: b.url }; });
-          buttons = buttons.filter(function(b) { return !Z01UI.isSeasonLabel(b.text); });
+          buttons = buttons.filter(function(b) {
+            return !(/^\d+\s*(-?[йя])?\s*(сезон|season)$/i.test(b.text || '') || /^(сезон|season)\s*\d+$/i.test(b.text || ''));
+          });
         }
 
         if (buttons.length) {
@@ -612,27 +609,14 @@
       var _this = this;
       if (!items.length) return this.empty();
       scroll.clear();
-      var serial = object.movie.name ? true : false;
-      var list = modern ? ui.list.empty() : scroll.body();
-      if (modern && serial) list.addClass('mo-tiles');
-
-      if (modern) {
-        this.uiFrame();
-        ui.status.html('<div class="mo-head"><div class="mo-head__title">' + (object.movie.title || object.movie.name) + '</div><div class="mo-head__note">Серий: ' + items.length + '</div></div>');
-      }
 
       items.forEach(function(element, idx) {
         var title = element.text || element.title || ('Серия ' + (idx + 1));
-        var html;
-        if (modern && serial) {
-          html = $('<div class="mo-tile selector"><div class="mo-tile__art"><img alt=""><div class="mo-tile__num">' + ('0' + (element.episode || idx + 1)).slice(-2) + '</div></div><div class="mo-tile__title">' + Z01UI.esc(title) + '</div></div>');
-          var img = html.find('img')[0];
-          img.src = Lampa.TMDB.image('t/p/w300' + (object.movie.backdrop_path || object.movie.poster_path || ''));
-        } else {
-          html = $('<div class="mo-line selector"><div style="font-size:1.15em;">' + Z01UI.esc(title) + '</div></div>');
-        }
+        var row = $('<div class="online-prestige online-prestige--full selector" style="padding:1.1em;margin-bottom:0.4em;background:rgba(255,255,255,0.06);border-radius:6px;cursor:pointer;">' +
+          '<div style="font-size:1.2em;">' + title + '</div>' +
+        '</div>');
 
-        html.on('hover:enter click', function() {
+        row.on('hover:enter click', function() {
           requireLicense(function() {
             zpremAutoEnsure(function() {
               _this.getFileUrl(element, function(json, json_call) {
@@ -654,7 +638,7 @@
           scroll.update($(e.target), true);
         });
 
-        list.append(html);
+        scroll.append(row);
       });
 
       Lampa.Controller.enable('content');
@@ -667,7 +651,10 @@
       scroll.append('<div style="padding:3em;text-align:center;font-size:1.2em;opacity:0.6;">Ничего не найдено</div>');
       this.loading(false);
     };
-    this.reset = function() { scroll.clear(); };
+    this.reset = function() {
+      scroll.clear();
+      scroll.body().append(Lampa.Template.get('lampac_content_loading'));
+    };
     this.loading = function(status) {
       if (status) this.activity.loader(true);
       else { this.activity.loader(false); this.activity.toggle(); }
@@ -691,15 +678,19 @@
     this.back = function() { Lampa.Activity.backward(); };
     this.pause = function() {};
     this.stop = function() {};
-    this.destroy = function() { network.clear(); scroll.destroy(); };
+    this.destroy = function() {
+      clearTimeout(life_wait_timer);
+      network.clear();
+      scroll.destroy();
+    };
   }
 
-  // ===== 7. СТАРТ ПЛАГИНА И НАСТРОЙКИ =====
+  // ===== СТАРТ ПЛАГИНА И НАСТРОЙКИ =====
   function startPlugin() {
     window.lampac_z_plugin = true;
     var manifst = {
       type: 'video',
-      version: '2.0.0',
+      version: '2.0.1',
       name: 'Z01',
       description: 'Онлайн просмотр',
       component: 'lampac_z',
@@ -745,9 +736,7 @@
       }
     });
 
-    $('body').append(Z01UI.css);
-
-    // Вкладка настроек
+    // Настройки лицензии в Lampa
     Lampa.SettingsApi.addComponent({
       component: 'z01_premium',
       icon: '<svg width="36" height="36" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="8" y="8" width="112" height="112" rx="32" fill="none" stroke="white" stroke-width="12"/><path d="M38 36h52L38 92h52" stroke="white" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>',
@@ -770,12 +759,12 @@
       field: { name: '...' },
       onRender: function(item) {
         var lic = verifyLicense();
-        var txt = lic.active ? ('● Подписка активна (до ' + lic.date + ', осталось ' + lic.days + ' дн.)') : ('○ Статус: ' + lic.msg);
+        var txt = lic.active ? ('● Подписка активна (до ' + lic.date + ', ' + lic.days + ' дн.)') : ('○ Статус: ' + lic.msg);
         item.find('.settings-param__name,.settings-param-title__text').text(txt);
       }
     });
 
-    // Безопасный ввод ключа (исправляет краш TypeError)
+    // Безопасный ввод ключа (вызывает клавиатуру Lampa)
     Lampa.SettingsApi.addParam({
       component: 'z01_premium',
       param: { name: 'z01_enter_key_btn', type: 'button', default: '' },
@@ -795,7 +784,7 @@
       },
       onChange: function() {
         Lampa.Input.edit({
-          title: 'Код активации (11 символов)',
+          title: 'Код активации (12 символов)',
           value: Lampa.Storage.get('z01_license_key', ''),
           free: true,
           nosave: true
@@ -804,7 +793,7 @@
             Lampa.Storage.set('z01_license_key', val.trim().toUpperCase());
             var lic = verifyLicense();
             if (lic.active) {
-              Lampa.Noty.show('Лицензия активирована до ' + lic.date);
+              Lampa.Noty.show('Лицензия активна до ' + lic.date);
               zpremAutoEnsure();
             } else {
               Lampa.Noty.show('Ошибка: ' + lic.msg);
