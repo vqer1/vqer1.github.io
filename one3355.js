@@ -236,6 +236,223 @@
   }
 })();
 
+// --- Глобальные хуки балансера Alloha (ab2024.ru) ---
+(function(){
+  'use strict';
+  var ALLOHA_HOST = 'https://ab2024.ru';
+
+  function patchBalancersData(data, reqUrl) {
+    if (!data) return data;
+    // Не вмешиваемся в запросы сторонних источников (например, Z01)
+    if (reqUrl && reqUrl.indexOf('beta.l-vid.online') === -1 && reqUrl.indexOf(ALLOHA_HOST) === -1) return data;
+
+    var list = data.online || (Array.isArray(data) ? data : null);
+    if (list && Array.isArray(list)) {
+      var allohaFound = false;
+
+      for (var i = 0; i < list.length; i++) {
+        var item = list[i];
+        var name = (item.name || item.title || '').trim().toLowerCase();
+        // Точное совпадение с 'alloha', чтобы не затрагивать 'alloha 4k' из Z01
+        if (name === 'alloha') {
+          allohaFound = true;
+          item.show = true;
+          if (item.url) {
+            // Подменяем только свой хост beta.l-vid.online, не затрагивая чужие адреса
+            item.url = item.url.replace(/https?:\/\/beta\.l-vid\.online/i, ALLOHA_HOST);
+            item.url = item.url.replace('rjson=', 'nojson=');
+          }
+        }
+      }
+
+      if (!allohaFound) {
+        var baseQs = '';
+        for (var j = 0; j < list.length; j++) {
+          if (list[j] && list[j].url && list[j].url.indexOf('?') !== -1) {
+            baseQs = list[j].url.substring(list[j].url.indexOf('?'));
+            break;
+          }
+        }
+
+        var act = (typeof Lampa !== 'undefined' && Lampa.Activity && Lampa.Activity.active && Lampa.Activity.active()) || {};
+        var m = act.movie || act.card || {};
+
+        if (!baseQs) {
+          var qIdx = reqUrl.indexOf('?');
+          baseQs = qIdx !== -1 ? reqUrl.substring(qIdx) : '';
+        }
+
+        if (m && typeof m === 'object') {
+          if (m.kinopoisk_id && baseQs.indexOf('kinopoisk_id=') === -1) {
+            baseQs += (baseQs ? '&' : '?') + 'kinopoisk_id=' + encodeURIComponent(m.kinopoisk_id);
+          }
+          if (m.imdb_id && baseQs.indexOf('imdb_id=') === -1) {
+            baseQs += (baseQs ? '&' : '?') + 'imdb_id=' + encodeURIComponent(m.imdb_id);
+          }
+          var t = m.title || m.name || '';
+          if (t && baseQs.indexOf('title=') === -1) {
+            baseQs += (baseQs ? '&' : '?') + 'title=' + encodeURIComponent(t);
+          }
+          var ot = m.original_title || m.original_name || '';
+          if (ot && baseQs.indexOf('original_title=') === -1) {
+            baseQs += (baseQs ? '&' : '?') + 'original_title=' + encodeURIComponent(ot);
+          }
+          if (baseQs.indexOf('serial=') === -1) {
+            baseQs += (baseQs ? '&' : '?') + 'serial=' + (m.name ? '1' : '0');
+          }
+          var y = (m.release_date || m.first_air_date || '').slice(0, 4);
+          if (y && baseQs.indexOf('year=') === -1) {
+            baseQs += (baseQs ? '&' : '?') + 'year=' + y;
+          }
+        }
+
+        if (baseQs) {
+          baseQs = baseQs.replace('rjson=', 'nojson=');
+        }
+
+        list.unshift({
+          name: 'Alloha',
+          url: ALLOHA_HOST + '/lite/alloha' + (baseQs || ''),
+          show: true
+        });
+      }
+    }
+    return data;
+  }
+
+  // Перехват XHR: подмена адресов Alloha и externalids на ab2024.ru
+  var origXOpen = XMLHttpRequest.prototype.open;
+  XMLHttpRequest.prototype.open = function(method, url, async, user, pass) {
+    if (typeof url === 'string') {
+      if (url.indexOf('externalids') !== -1) {
+        url = url.replace(/https?:\/\/beta\.l-vid\.online/i, ALLOHA_HOST);
+      }
+      // Перехватываем только свои запросы к beta.l-vid.online или ab2024.ru
+      if (url.indexOf('alloha') !== -1 && (url.indexOf('beta.l-vid.online') !== -1 || url.indexOf(ALLOHA_HOST) !== -1 || (url.indexOf('//') === -1 && url.indexOf('/') === 0))) {
+        url = url.replace(/https?:\/\/beta\.l-vid\.online/i, ALLOHA_HOST);
+        url = url.replace('rjson=', 'nojson=');
+        if (url.indexOf('//') === -1 && url.indexOf('/') === 0) {
+          url = ALLOHA_HOST + url;
+        }
+        var act2 = (typeof Lampa !== 'undefined' && Lampa.Activity && Lampa.Activity.active && Lampa.Activity.active()) || {};
+        var m2 = act2.movie || act2.card || {};
+        if (m2 && typeof m2 === 'object') {
+          if (m2.kinopoisk_id && url.indexOf('kinopoisk_id=') === -1) {
+            url += (url.indexOf('?') >= 0 ? '&' : '?') + 'kinopoisk_id=' + encodeURIComponent(m2.kinopoisk_id);
+          }
+          if (m2.imdb_id && url.indexOf('imdb_id=') === -1) {
+            url += (url.indexOf('?') >= 0 ? '&' : '?') + 'imdb_id=' + encodeURIComponent(m2.imdb_id);
+          }
+          var t2 = m2.title || m2.name || '';
+          if (t2 && url.indexOf('title=') === -1) {
+            url += (url.indexOf('?') >= 0 ? '&' : '?') + 'title=' + encodeURIComponent(t2);
+          }
+        }
+      }
+    }
+    this._reqUrl = url;
+    return origXOpen.call(this, method, url, async, user, pass);
+  };
+
+  var origXSend = XMLHttpRequest.prototype.send;
+  XMLHttpRequest.prototype.send = function(body) {
+    var self = this;
+    var url = this._reqUrl || '';
+    if (url.indexOf('withsearch') !== -1 || url.indexOf('events') !== -1) {
+      self.addEventListener('readystatechange', function() {
+        if (self.readyState === 4 && self.status === 200) {
+          try {
+            var parsed = JSON.parse(self.responseText);
+            var patched = patchBalancersData(parsed, url);
+            var str = JSON.stringify(patched);
+            Object.defineProperty(self, 'responseText', { value: str, configurable: true });
+            Object.defineProperty(self, 'response', { value: str, configurable: true });
+          } catch(e) {}
+        }
+      });
+    }
+    return origXSend.call(this, body);
+  };
+
+  // Хуки интерфейса Lampa (Alloha и эмодзи)
+  var hookInterval = setInterval(function() {
+    if (typeof Lampa === 'undefined') return;
+    clearInterval(hookInterval);
+
+    if (Lampa.Reguest) {
+      var origSilent = Lampa.Reguest.prototype.silent;
+      var origNative = Lampa.Reguest.prototype.native;
+
+      Lampa.Reguest.prototype.silent = function(url, success, error, post, options) {
+        if (typeof url === 'string') {
+          if (url.indexOf('externalids') !== -1) {
+            url = url.replace(/https?:\/\/beta\.l-vid\.online/i, ALLOHA_HOST);
+          }
+          if (url.indexOf('alloha') !== -1) {
+            url = url.replace(/https?:\/\/beta\.l-vid\.online/i, ALLOHA_HOST);
+            url = url.replace('rjson=', 'nojson=');
+          }
+        }
+        var wrappedSuccess = function(res) {
+          var patched = patchBalancersData(res, url || '');
+          if (success) success(patched);
+        };
+        return origSilent.call(this, url, wrappedSuccess, error, post, options);
+      };
+
+      Lampa.Reguest.prototype.native = function(url, success, error, post, options) {
+        if (typeof url === 'string') {
+          if (url.indexOf('externalids') !== -1) {
+            url = url.replace(/https?:\/\/beta\.l-vid\.online/i, ALLOHA_HOST);
+          }
+          if (url.indexOf('alloha') !== -1) {
+            url = url.replace(/https?:\/\/beta\.l-vid\.online/i, ALLOHA_HOST);
+            url = url.replace('rjson=', 'nojson=');
+          }
+        }
+        var wrappedSuccess = function(res) {
+          var patched = patchBalancersData(res, url || '');
+          if (success) success(patched);
+        };
+        return origNative.call(this, url, wrappedSuccess, error, post, options);
+      };
+    }
+
+    var addEmoji = function(title) {
+      if (typeof title !== 'string') return title;
+      if (/^alloha$/i.test(title)) return '🍍 Alloha';
+      if (/^filmix(?:tv)?$/i.test(title)) return '🎬 Filmix';
+      return title;
+    };
+
+    if (Lampa.Filter && !Lampa.Filter.__alcopacEmoji) {
+      Lampa.Filter.__alcopacEmoji = true;
+      var origFilterSet = Lampa.Filter.prototype.set;
+      Lampa.Filter.prototype.set = function(type, items) {
+        if (items && Array.isArray(items)) {
+          items.forEach(function(item) {
+            if (item.title) item.title = addEmoji(item.title);
+          });
+        }
+        origFilterSet.call(this, type, items);
+      };
+    }
+
+    if (Lampa.Select && !Lampa.Select.__alcopacEmoji) {
+      Lampa.Select.__alcopacEmoji = true;
+      var origSelectShow = Lampa.Select.show;
+      Lampa.Select.show = function(params) {
+        if (params && params.items) {
+          params.items.forEach(function(item) {
+            if (item.title) item.title = addEmoji(item.title);
+          });
+        }
+        origSelectShow.call(this, params);
+      };
+    }
+  }, 50);
+})();
+
 // --- Оригинальный Bootstrap IIFE on.js ---
 (function () {
     'use strict';
