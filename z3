@@ -83,106 +83,11 @@
   }
   // ===== /ES5 polyfills =====
 
-  // ===== Random server selection =====
-  var Z01_SERVERS = [
-    'http://s1.z01.online/',
-    'http://s2.z01.online/',
-    'http://s3.z01.online/'
-  ];
-  var Z01_FALLBACK = 'http://z01.online/';
-  var Z01_PING_TIMEOUT = 1500;
-
-  function z01Ping(url, callback) {
-    var xhr = new XMLHttpRequest();
-    var done = false;
-    function finish(ok) {
-      if (done) return;
-      done = true;
-      callback(ok);
-    }
-    try {
-      xhr.open('GET', url, true);
-      xhr.timeout = Z01_PING_TIMEOUT;
-      xhr.onload = function() { finish(xhr.status >= 200 && xhr.status < 400); };
-      xhr.onerror = function() { finish(false); };
-      xhr.ontimeout = function() { finish(false); };
-      xhr.send();
-    } catch (e) { finish(false); }
-  }
-
-  function z01Shuffle(arr) {
-    var copy = arr.slice();
-    for (var i = copy.length - 1; i > 0; i--) {
-      var j = Math.floor(Math.random() * (i + 1));
-      var tmp = copy[i];
-      copy[i] = copy[j];
-      copy[j] = tmp;
-    }
-    return copy;
-  }
-
-  function z01PickServer(callback) {
-    var candidates = z01Shuffle(Z01_SERVERS);
-    function tryNext(index) {
-      if (index >= candidates.length) {
-        callback(Z01_FALLBACK);
-        return;
-      }
-      z01Ping(candidates[index], function(ok) {
-        if (ok) callback(candidates[index]);
-        else tryNext(index + 1);
-      });
-    }
-    tryNext(0);
-  }
-  // ===== /Random server selection =====
-
-  var Defined = {
-    api: 'lampac',
-    localhost: 'http://z01.online/',
-    apn: ''
-  };
-
-  var Z01_FREE = Z01_FALLBACK;
-  z01PickServer(function(server) {
-    Z01_FREE = server;
-    if (Defined.localhost === Z01_FALLBACK) Defined.localhost = server;
-  });
-
-  // Премиум эндпоинты
-  var ZPREM_SERVER = (Lampa.Utils && Lampa.Utils.protocol ? Lampa.Utils.protocol() : 'http://') + 'prem.z01.online/';
-  var ZPREM_CHECK_URL = (Lampa.Utils && Lampa.Utils.protocol ? Lampa.Utils.protocol() : 'http://') + 'oplata.z01.online/check.php';
-  var ZPREM_TRIAL_URL = (Lampa.Utils && Lampa.Utils.protocol ? Lampa.Utils.protocol() : 'http://') + 'oplata.z01.online/trial.php';
-  var ZPREM_PAY_URL = 'https://oplata.z01.online/pay.php';
-
-  var zprem_dropped = false;
-  function zpremDrop(er) {
-    if (zprem_dropped || !er || !er.accsdb || Defined.localhost !== ZPREM_SERVER) return false;
-    zprem_dropped = true;
-    Defined.localhost = Z01_FREE;
-    // Фоновое обновление триала при ошибке доступа
-    zpremResetTrial(true);
-    zpremTrial(function(ok) {
-      if (ok) {
-        zprem_dropped = false;
-        Defined.localhost = ZPREM_SERVER;
-      }
-    });
-    return true;
-  }
-
-  function arrFind(list, test) {
-    if (!list) return undefined;
-    for (var i = 0; i < list.length; i++) {
-      if (test(list[i], i, list)) return list[i];
-    }
-    return undefined;
-  }
-
-  var balansers_with_search;
-
-  // ===== OFFLINE LICENSE LOGIC =====
+  // ===== FX1 OFFLINE LICENSE & DEVICE ID =====
+  // ВАЖНО: FX1_SALT должен в точности совпадать с SALT в fx1-keygen.html!
   var FX1_SALT = 'FX1_SALT_change_me_2026';
+  var FX1_TG_NAME = '@Lopxh';
+  var FX1_TG_URL = 'https://t.me/Lopxh';
   var FX1_ALPHA = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
   function fx1Sha256(ascii) {
@@ -236,6 +141,7 @@
     return out;
   }
 
+  // Стабильный 6-значный ID устройства: создается один раз и не сбрасывается
   function fx1DeviceId() {
     var id = String(Lampa.Storage.get('fx1_device_id', '') || '');
     if (!/^[A-Z0-9]{6}$/.test(id)) {
@@ -313,7 +219,140 @@
     Lampa.Storage.set('fx1_fails', '0');
     return { ok: true, msg: 'Лицензия активирована' };
   }
-  // ===== /OFFLINE LICENSE LOGIC =====
+
+  function fx1IsTV() {
+    var ua = navigator.userAgent.toLowerCase();
+    return ua.indexOf('tizen') !== -1 || ua.indexOf('webos') !== -1 || ua.indexOf('web0s') !== -1 ||
+      ua.indexOf('smart-tv') !== -1 || ua.indexOf('smarttv') !== -1 || ua.indexOf('android tv') !== -1 ||
+      ua.indexOf('tv browser') !== -1 || typeof window.tizen !== 'undefined' || typeof window.webOS !== 'undefined';
+  }
+
+  function fx1OpenContact(note, backController) {
+    var qr = 'https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=' + encodeURIComponent(FX1_TG_URL) + '&bgcolor=1a1a2e&color=ffffff&format=png';
+    var html = $('<div style="padding:1.5em;text-align:center;">' +
+      '<div style="font-size:1.5em;margin-bottom:0.3em;color:#7cc4ff;">★ FX1 Premium</div>' +
+      '<div style="font-size:1.1em;margin-bottom:0.8em;opacity:0.85;">' + note + '</div>' +
+      '<div style="font-size:1.3em;margin-bottom:0.3em;">Telegram: <b>' + FX1_TG_NAME + '</b></div>' +
+      '<div style="font-size:1.1em;margin-bottom:0.8em;opacity:0.85;">Ваш ID устройства: <b style="letter-spacing:2px;color:#7cc4ff;">' + fx1DeviceId() + '</b></div>' +
+      '<div style="background:#fff;display:inline-block;padding:10px;border-radius:12px;margin-bottom:0.8em;"><img src="' + qr + '" width="180" height="180" style="display:block;width:180px;height:180px;" /></div>' +
+      '<div><div class="fx1-open-tg selector" style="background:linear-gradient(135deg,#2886fb 0%,#1c6edb 100%);padding:0.6em 2em;border-radius:0.3em;font-size:1.2em;display:inline-block;">Открыть Telegram</div></div>' +
+      '</div>');
+    html.find('.fx1-open-tg').on('hover:enter click', function() {
+      if (!fx1IsTV()) window.open(FX1_TG_URL, '_blank');
+    });
+    Lampa.Modal.open({
+      title: '',
+      html: html,
+      onBack: function() {
+        Lampa.Modal.close();
+        Lampa.Controller.toggle(backController || 'content');
+      }
+    });
+  }
+
+  function fx1ShowGate() {
+    var st = fx1License().state;
+    var note = st === 'expired' ? 'Подписка закончилась. Для продления напишите в Telegram.' :
+      st === 'bad' ? 'Ключ не подходит к этому устройству. Сообщите ID продавцу.' :
+      'Для просмотра нужна активация. Получить ключ можно в Telegram.';
+    fx1OpenContact(note, 'content');
+  }
+  // ===== /FX1 OFFLINE LICENSE =====
+
+  // ===== Random server selection =====
+  var Z01_SERVERS = [
+    'http://s1.z01.online/',
+    'http://s2.z01.online/',
+    'http://s3.z01.online/'
+  ];
+  var Z01_FALLBACK = 'http://z01.online/';
+  var Z01_PING_TIMEOUT = 1500;
+
+  function z01Ping(url, callback) {
+    var xhr = new XMLHttpRequest();
+    var done = false;
+    function finish(ok) {
+      if (done) return;
+      done = true;
+      callback(ok);
+    }
+    try {
+      xhr.open('GET', url, true);
+      xhr.timeout = Z01_PING_TIMEOUT;
+      xhr.onload = function() { finish(xhr.status >= 200 && xhr.status < 400); };
+      xhr.onerror = function() { finish(false); };
+      xhr.ontimeout = function() { finish(false); };
+      xhr.send();
+    } catch (e) { finish(false); }
+  }
+
+  function z01Shuffle(arr) {
+    var copy = arr.slice();
+    for (var i = copy.length - 1; i > 0; i--) {
+      var j = Math.floor(Math.random() * (i + 1));
+      var tmp = copy[i];
+      copy[i] = copy[j];
+      copy[j] = tmp;
+    }
+    return copy;
+  }
+
+  function z01PickServer(callback) {
+    var candidates = z01Shuffle(Z01_SERVERS);
+    function tryNext(index) {
+      if (index >= candidates.length) {
+        callback(Z01_FALLBACK);
+        return;
+      }
+      z01Ping(candidates[index], function(ok) {
+        if (ok) callback(candidates[index]);
+        else tryNext(index + 1);
+      });
+    }
+    tryNext(0);
+  }
+
+  var Defined = {
+    api: 'lampac',
+    localhost: 'http://z01.online/',
+    apn: ''
+  };
+
+  var Z01_FREE = Z01_FALLBACK;
+  z01PickServer(function(server) {
+    Z01_FREE = server;
+    if (Defined.localhost === Z01_FALLBACK) Defined.localhost = server;
+  });
+
+  // Премиум эндпоинты
+  var ZPREM_SERVER = (Lampa.Utils && Lampa.Utils.protocol ? Lampa.Utils.protocol() : 'http://') + 'prem.z01.online/';
+  var ZPREM_CHECK_URL = (Lampa.Utils && Lampa.Utils.protocol ? Lampa.Utils.protocol() : 'http://') + 'oplata.z01.online/check.php';
+  var ZPREM_TRIAL_URL = (Lampa.Utils && Lampa.Utils.protocol ? Lampa.Utils.protocol() : 'http://') + 'oplata.z01.online/trial.php';
+
+  var zprem_dropped = false;
+  function zpremDrop(er) {
+    if (zprem_dropped || !er || !er.accsdb || Defined.localhost !== ZPREM_SERVER) return false;
+    zprem_dropped = true;
+    Defined.localhost = Z01_FREE;
+    zpremResetTrial(true);
+    zpremTrial(function(ok) {
+      if (ok) {
+        zprem_dropped = false;
+        Defined.localhost = ZPREM_SERVER;
+      }
+    });
+    return true;
+  }
+
+  function arrFind(list, test) {
+    if (!list) return undefined;
+    for (var i = 0; i < list.length; i++) {
+      if (test(list[i], i, list)) return list[i];
+    }
+    return undefined;
+  }
+
+  var balansers_with_search;
 
   // ===== UID & TRIAL AUTO-RESET LOGIC (СКРЫТЫЙ ДЕМО 2 ДНЯ) =====
   var unic_id = Lampa.Storage.get('lampac_unic_id', '');
@@ -353,59 +392,23 @@
     return newEmail;
   }
 
-  // Сброс триала: НЕ затрагивает fx1_device_id
+  // Сброс триала: НЕ затрагивает fx1_device_id или fx1_key
   function zpremResetTrial(quiet) {
     Lampa.Storage.set('zpremkey', '');
     Lampa.Storage.set('zprem_expires', '');
     Lampa.Storage.set('zprem_trial_used', '');
     resetZ01Uid();
     rotateZ01TrialEmail();
-    if (!quiet && typeof Lampa !== 'undefined' && Lampa.Noty) {
-      Lampa.Noty.show('Связь с премиум-сервером обновлена');
-    }
   }
   window.zpremResetTrial = zpremResetTrial;
 
-  function zpremDaysText(days) {
-    if (days <= 0) return 'истекла';
-    var n = Math.abs(days) % 100;
-    var n1 = n % 10;
-    if (n > 10 && n < 20) return days + ' дней';
-    if (n1 > 1 && n1 < 5) return days + ' дня';
-    if (n1 == 1) return days + ' день';
-    return days + ' дней';
-  }
-
   function isZpremActive() {
-    if (fx1Licensed()) return true; // Оффлайн лицензия имеет приоритет
     var key = Lampa.Storage.get('zpremkey', '');
     var exp = Lampa.Storage.get('zprem_expires', '');
     if (key && exp) {
       return (new Date(exp).getTime() - Date.now()) > 0;
     }
     return false;
-  }
-
-  function zpremCheck(callback) {
-    var email = getZ01Email();
-    if (!email) { if (callback) callback(false); return; }
-    var net = new Lampa.Reguest();
-    net.timeout(10000);
-    net.silent(ZPREM_CHECK_URL + '?email=' + encodeURIComponent(email), function(resp) {
-      try {
-        if (typeof resp === 'string') resp = JSON.parse(resp);
-        if (resp.status === 'active' && resp.zpremkey) {
-          Lampa.Storage.set('zpremkey', resp.zpremkey);
-          Lampa.Storage.set('zprem_expires', resp.expires_at);
-          Defined.localhost = ZPREM_SERVER;
-          if (callback) callback(true);
-        } else {
-          Lampa.Storage.set('zpremkey', '');
-          Lampa.Storage.set('zprem_expires', '');
-          if (callback) callback(false);
-        }
-      } catch(e) { if (callback) callback(false); }
-    }, function() { if (callback) callback(false); });
   }
 
   function zpremTrial(callback) {
@@ -447,7 +450,6 @@
     sendTrialRequest(email, uid, 0);
   }
 
-  // Бесшовный фоновый запрос демо при старте или окончании 48ч
   function zpremAutoEnsure(callback) {
     if (isZpremActive()) {
       Defined.localhost = ZPREM_SERVER;
@@ -472,11 +474,8 @@
     }
   }
 
-  window.zpremCheck = zpremCheck;
-  window.zpremDaysText = zpremDaysText;
   window.zpremTrial = zpremTrial;
   window.zpremAutoEnsure = zpremAutoEnsure;
-  // ========================================
 
   function getAndroidVersion() {
     if (Lampa.Platform.is('android')) {
@@ -665,18 +664,18 @@
 
   var Network = Lampa.Reguest;
 
-  var Z01UI = {};
-  Z01UI.enabled = function() { return Lampa.Storage.get('z01_ui_mode', 'modern') !== 'classic'; };
-  Z01UI.REQUEST_TIMEOUT = 20000;
-  Z01UI.WATCHDOG = 24;
-  Z01UI.WATCHDOG_FIRST = 40;
+  var FX1UI = {};
+  FX1UI.enabled = function() { return Lampa.Storage.get('fx1_ui_mode', 'modern') !== 'classic'; };
+  FX1UI.REQUEST_TIMEOUT = 20000;
+  FX1UI.WATCHDOG = 24;
+  FX1UI.WATCHDOG_FIRST = 40;
 
-  Z01UI.esc = function(str) {
+  FX1UI.esc = function(str) {
     return (str === undefined || str === null ? '' : String(str))
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   };
 
-  Z01UI.shortQuality = function(text) {
+  FX1UI.shortQuality = function(text) {
     if (!text) return '';
     text = String(text);
     var match = text.match(/(2160|1440|1080|720|576|480|360)\s*p?/i);
@@ -693,53 +692,53 @@
     return '';
   };
 
-  Z01UI.VOICE_KINDS = [
-    { key: 'dub', title: 'z01_voice_dub', re: /дубляж|дублирован|\bdub\b|\bdubbing\b/i },
-    { key: 'mvo', title: 'z01_voice_mvo', re: /многоголос|\bmvo\b|\bpmvo\b/i },
-    { key: 'dvo', title: 'z01_voice_dvo', re: /двухголос|\bdvo\b/i },
-    { key: 'avo', title: 'z01_voice_avo', re: /авторск|одноголос|\bavo\b|\bvo\b/i },
-    { key: 'orig', title: 'z01_voice_orig', re: /оригинал|original|\beng\b|\bua\b|\bukr\b/i },
-    { key: 'sub', title: 'z01_voice_sub', re: /субтитр|sub(title)?s?\b/i }
+  FX1UI.VOICE_KINDS = [
+    { key: 'dub', title: 'fx1_voice_dub', re: /дубляж|дублирован|\bdub\b|\bdubbing\b/i },
+    { key: 'mvo', title: 'fx1_voice_mvo', re: /многоголос|\bmvo\b|\bpmvo\b/i },
+    { key: 'dvo', title: 'fx1_voice_dvo', re: /двухголос|\bdvo\b/i },
+    { key: 'avo', title: 'fx1_voice_avo', re: /авторск|одноголос|\bavo\b|\bvo\b/i },
+    { key: 'orig', title: 'fx1_voice_orig', re: /оригинал|original|\beng\b|\bua\b|\bukr\b/i },
+    { key: 'sub', title: 'fx1_voice_sub', re: /субтитр|sub(title)?s?\b/i }
   ];
 
-  Z01UI.VOICE_STUDIOS = [
+  FX1UI.VOICE_STUDIOS = [
     { key: 'mvo', re: /lostfilm|лостфильм|tvshows|dniprofilm|невафильм|newstudio|newcomers|baibako|байбако|alexfilm|jaskier|coldfilm|колдфильм|hdrezka|rezkastudio|red head sound|sunshine|amedia|zakadry|закадры|linefilm|le-production|1win|kerob|profix|selena|октопус/i },
     { key: 'dvo', re: /кубик в кубе|kubik|viruseproject|вирус|green ?tea|paradox/i },
     { key: 'avo', re: /яроцк|гаврилов|володарск|сербин|горчаков|михал[её]в|живов|пучков|гоблин|кураж|дольск|есарев|карповск|визгунов/i }
   ];
 
-  Z01UI.voiceKind = function(title) {
+  FX1UI.voiceKind = function(title) {
     var text = String(title || '');
-    for (var i = 0; i < Z01UI.VOICE_KINDS.length; i++) {
-      if (Z01UI.VOICE_KINDS[i].re.test(text)) return Z01UI.VOICE_KINDS[i].key;
+    for (var i = 0; i < FX1UI.VOICE_KINDS.length; i++) {
+      if (FX1UI.VOICE_KINDS[i].re.test(text)) return FX1UI.VOICE_KINDS[i].key;
     }
-    for (var j = 0; j < Z01UI.VOICE_STUDIOS.length; j++) {
-      if (Z01UI.VOICE_STUDIOS[j].re.test(text)) return Z01UI.VOICE_STUDIOS[j].key;
+    for (var j = 0; j < FX1UI.VOICE_STUDIOS.length; j++) {
+      if (FX1UI.VOICE_STUDIOS[j].re.test(text)) return FX1UI.VOICE_STUDIOS[j].key;
     }
     return 'other';
   };
 
-  Z01UI.voiceKindTitle = function(key) {
-    for (var i = 0; i < Z01UI.VOICE_KINDS.length; i++) {
-      if (Z01UI.VOICE_KINDS[i].key == key) return Lampa.Lang.translate(Z01UI.VOICE_KINDS[i].title);
+  FX1UI.voiceKindTitle = function(key) {
+    for (var i = 0; i < FX1UI.VOICE_KINDS.length; i++) {
+      if (FX1UI.VOICE_KINDS[i].key == key) return Lampa.Lang.translate(FX1UI.VOICE_KINDS[i].title);
     }
-    return Lampa.Lang.translate('z01_voice_other');
+    return Lampa.Lang.translate('fx1_voice_other');
   };
 
-  Z01UI.voiceGroups = function(list) {
+  FX1UI.voiceGroups = function(list) {
     var order = [];
     var map = {};
     (list || []).forEach(function(entry, index) {
-      var key = Z01UI.voiceKind(entry.title);
+      var key = FX1UI.voiceKind(entry.title);
       if (!map[key]) {
-        map[key] = { key: key, title: Z01UI.voiceKindTitle(key), items: [] };
+        map[key] = { key: key, title: FX1UI.voiceKindTitle(key), items: [] };
         order.push(key);
       }
       map[key].items.push({ index: index, title: entry.title, url: entry.url });
     });
     var rank = function(key) {
-      for (var i = 0; i < Z01UI.VOICE_KINDS.length; i++) {
-        if (Z01UI.VOICE_KINDS[i].key == key) return i;
+      for (var i = 0; i < FX1UI.VOICE_KINDS.length; i++) {
+        if (FX1UI.VOICE_KINDS[i].key == key) return i;
       }
       return 90;
     };
@@ -747,29 +746,29 @@
     return order.map(function(key) { return map[key]; });
   };
 
-  Z01UI.splitSourceName = function(name) {
+  FX1UI.splitSourceName = function(name) {
     name = String(name || '');
     var badge = '';
     var match = name.match(/\s*[-~–]\s*(2160p?|1440p?|1080p?|720p?|480p?|4k|uhd|fhd|hd)\b[^,]*$/i);
     if (match) {
-      badge = Z01UI.shortQuality(match[1]);
+      badge = FX1UI.shortQuality(match[1]);
       if (badge) name = name.slice(0, match.index);
     }
     return { name: name.replace(/\s+$/, ''), badge: badge };
   };
 
-  Z01UI.isSeasonLabel = function(text) {
+  FX1UI.isSeasonLabel = function(text) {
     text = String(text || '').trim();
     return /^\d+\s*(-?[йя])?\s*(сезон|season)$/i.test(text) || /^(сезон|season)\s*\d+$/i.test(text);
   };
 
-  Z01UI.MOVIE_ONLY = ['xvideocdnultra', 'xvideocdn60fps'];
-  Z01UI.isMovieOnlySource = function(key, title) {
-    if (Z01UI.MOVIE_ONLY.indexOf(String(key || '').toLowerCase()) !== -1) return true;
+  FX1UI.MOVIE_ONLY = ['xvideocdnultra', 'xvideocdn60fps'];
+  FX1UI.isMovieOnlySource = function(key, title) {
+    if (FX1UI.MOVIE_ONLY.indexOf(String(key || '').toLowerCase()) !== -1) return true;
     return /^xvideocdn/i.test(key || '') && /ultra|60\s*\/?\s*120|60fps/i.test(title || '');
   };
 
-  Z01UI.payLink = function(answer) {
+  FX1UI.payLink = function(answer) {
     if (!answer) return '';
     var fields = ['url', 'link', 'pay', 'pay_url', 'payurl', 'buy', 'account'];
     for (var i = 0; i < fields.length; i++) {
@@ -781,24 +780,24 @@
     return match ? match[0] : '';
   };
 
-  Z01UI.serverDenial = function(answer) {
+  FX1UI.serverDenial = function(answer) {
     if (!answer || typeof answer !== 'object') return null;
     var denied = !!(answer.accsdb || answer.blocked || answer.error || (typeof answer.code === 'number' && answer.code >= 300));
     if (!denied) return null;
     var text = String(answer.msg || answer.message || answer.text || '');
     var own_image = /<img|qr-code|qrcode/i.test(text);
     return {
-      msg: text || Lampa.Lang.translate('z01_no_access_text'),
-      link: own_image ? '' : Z01UI.payLink(answer)
+      msg: text || Lampa.Lang.translate('fx1_no_access_text'),
+      link: own_image ? '' : FX1UI.payLink(answer)
     };
   };
 
-  Z01UI.qrImage = function(link, size) {
+  FX1UI.qrImage = function(link, size) {
     size = size || 300;
     return 'https://api.qrserver.com/v1/create-qr-code/?size=' + size + 'x' + size + '&margin=10&data=' + encodeURIComponent(link);
   };
 
-  Z01UI.providerName = function(url) {
+  FX1UI.providerName = function(url) {
     var path = String(url || '').split('?')[0].split('#')[0];
     var parts = path.split('/');
     var last = '';
@@ -806,38 +805,38 @@
     return last;
   };
 
-  Z01UI.seasonNumber = function(title) {
+  FX1UI.seasonNumber = function(title) {
     var match = String(title || '').match(/\d+/);
     return match ? parseInt(match[0]) : 0;
   };
 
-  Z01UI.normName = function(text) {
+  FX1UI.normName = function(text) {
     text = String(text === undefined || text === null ? '' : text).toLowerCase();
     text = text.replace(/\u0451/g, '\u0435').replace(/[^0-9a-z\u0430-\u044f]+/g, ' ');
     return text.replace(/^\s+/, '').replace(/\s+$/, '');
   };
 
-  Z01UI.nameParts = function(text) {
+  FX1UI.nameParts = function(text) {
     var raw = String(text || '').split(/\s*[\/|]\s*/);
     var out = [];
     for (var i = 0; i < raw.length; i++) {
-      var norm = Z01UI.normName(raw[i]);
+      var norm = FX1UI.normName(raw[i]);
       if (norm) out.push(norm);
     }
     return out;
   };
 
-  Z01UI.yearOf = function(value) {
+  FX1UI.yearOf = function(value) {
     var match = String(value === undefined || value === null ? '' : value).match(/\d{4}/);
     var year = match ? parseInt(match[0], 10) : 0;
     return year > 1900 && year < 2200 ? year : 0;
   };
 
-  Z01UI.movieNames = function(movie) {
+  FX1UI.movieNames = function(movie) {
     var fields = ['title', 'name', 'original_title', 'original_name'];
     var out = [];
     for (var i = 0; i < fields.length; i++) {
-      var parts = Z01UI.nameParts(movie && movie[fields[i]]);
+      var parts = FX1UI.nameParts(movie && movie[fields[i]]);
       for (var j = 0; j < parts.length; j++) {
         if (out.indexOf(parts[j]) === -1) out.push(parts[j]);
       }
@@ -845,10 +844,10 @@
     return out;
   };
 
-  Z01UI.matchScore = function(elem, movie) {
+  FX1UI.matchScore = function(elem, movie) {
     if (!elem || !movie) return 0;
-    var mine = Z01UI.movieNames(movie);
-    var theirs = Z01UI.nameParts(elem.title || elem.text || '');
+    var mine = FX1UI.movieNames(movie);
+    var theirs = FX1UI.nameParts(elem.title || elem.text || '');
     var score = 0;
     for (var i = 0; i < theirs.length; i++) {
       for (var j = 0; j < mine.length; j++) {
@@ -861,8 +860,8 @@
         if (hit > score) score = hit;
       }
     }
-    var my_year = Z01UI.yearOf(movie.release_date || movie.first_air_date || movie.year);
-    var their_year = Z01UI.yearOf(elem.year || elem.start_date);
+    var my_year = FX1UI.yearOf(movie.release_date || movie.first_air_date || movie.year);
+    var their_year = FX1UI.yearOf(elem.year || elem.start_date);
     if (my_year && their_year) {
       var diff = Math.abs(my_year - their_year);
       if (diff === 0) score += 34;
@@ -872,10 +871,10 @@
     return score;
   };
 
-  Z01UI.rankSimilars = function(list, movie) {
+  FX1UI.rankSimilars = function(list, movie) {
     var ranked = [];
     for (var i = 0; i < (list || []).length; i++) {
-      ranked.push({ elem: list[i], index: i, score: Z01UI.matchScore(list[i], movie) });
+      ranked.push({ elem: list[i], index: i, score: FX1UI.matchScore(list[i], movie) });
     }
     ranked.sort(function(a, b) { return b.score - a.score || a.index - b.index; });
     var best = ranked[0];
@@ -889,22 +888,22 @@
     };
   };
 
-  Z01UI.SEEN_PERCENT = 90;
-  Z01UI.isSeen = function(element, viewed) {
+  FX1UI.SEEN_PERCENT = 90;
+  FX1UI.isSeen = function(element, viewed) {
     if (!element) return false;
     if (element.hash_behold && viewed && viewed.indexOf(element.hash_behold) !== -1) return true;
     var line = element.timeline;
-    return !!(line && line.percent >= Z01UI.SEEN_PERCENT);
+    return !!(line && line.percent >= FX1UI.SEEN_PERCENT);
   };
 
-  Z01UI.QUALITY_RANK = { '4K': 4, 'FHD': 3, 'HD': 2, 'SD': 1 };
-  Z01UI.qualityRank = function(label) { return Z01UI.QUALITY_RANK[label] || 0; };
-  Z01UI.reachKey = function(movie) {
+  FX1UI.QUALITY_RANK = { '4K': 4, 'FHD': 3, 'HD': 2, 'SD': 1 };
+  FX1UI.qualityRank = function(label) { return FX1UI.QUALITY_RANK[label] || 0; };
+  FX1UI.reachKey = function(movie) {
     if (!movie) return '';
     return Lampa.Utils.hash(movie.original_name || movie.original_title || movie.name || movie.title || '');
   };
 
-  Z01UI.bestQuality = function(items) {
+  FX1UI.bestQuality = function(items) {
     var best = '';
     for (var i = 0; i < (items || []).length; i++) {
       var item = items[i] || {};
@@ -912,42 +911,42 @@
       var quality = item.quality || item.qualitys;
       if (quality && typeof quality === 'object') label = Lampa.Arrays.getKeys(quality).join(' ');
       else if (quality) label = String(quality);
-      var found = Z01UI.qualityFromText(label) || Z01UI.qualityFromText(item.title || item.text || '');
-      if (Z01UI.qualityRank(found) > Z01UI.qualityRank(best)) best = found;
+      var found = FX1UI.qualityFromText(label) || FX1UI.qualityFromText(item.title || item.text || '');
+      if (FX1UI.qualityRank(found) > FX1UI.qualityRank(best)) best = found;
     }
     return best;
   };
 
-  Z01UI.qualityFromText = function(text) {
+  FX1UI.qualityFromText = function(text) {
     text = String(text === undefined || text === null ? '' : text);
     var best = '';
     var re = /(?:^|[^\d])(2160|1440|1080|720|576|480)\s*p?(?![\d])/gi;
     var found;
     while ((found = re.exec(text))) {
-      var label = Z01UI.shortQuality(found[1] + 'p');
-      if (Z01UI.qualityRank(label) > Z01UI.qualityRank(best)) best = label;
+      var label = FX1UI.shortQuality(found[1] + 'p');
+      if (FX1UI.qualityRank(label) > FX1UI.qualityRank(best)) best = label;
     }
-    if (/4k|uhd/i.test(text) && Z01UI.qualityRank('4K') > Z01UI.qualityRank(best)) best = '4K';
+    if (/4k|uhd/i.test(text) && FX1UI.qualityRank('4K') > FX1UI.qualityRank(best)) best = '4K';
     if (!best && /fhd/i.test(text)) best = 'FHD';
     return best;
   };
 
-  Z01UI.knownQuality = function(name) { return Lampa.Storage.cache('z01_source_quality', 500, {})[name] || ''; };
-  Z01UI.rememberQuality = function(name, label) {
+  FX1UI.knownQuality = function(name) { return Lampa.Storage.cache('fx1_source_quality', 500, {})[name] || ''; };
+  FX1UI.rememberQuality = function(name, label) {
     if (!name || !label) return;
-    var all = Lampa.Storage.cache('z01_source_quality', 500, {});
-    if (Z01UI.qualityRank(label) <= Z01UI.qualityRank(all[name])) return;
+    var all = Lampa.Storage.cache('fx1_source_quality', 500, {});
+    if (FX1UI.qualityRank(label) <= FX1UI.qualityRank(all[name])) return;
     all[name] = label;
-    Lampa.Storage.set('z01_source_quality', all);
+    Lampa.Storage.set('fx1_source_quality', all);
   };
 
-  Z01UI.sourceBadge = function(name, parts) {
-    return Z01UI.knownQuality(name) || (parts ? parts.badge : '');
+  FX1UI.sourceBadge = function(name, parts) {
+    return FX1UI.knownQuality(name) || (parts ? parts.badge : '');
   };
 
-  Z01UI.reachEntry = function(movie, season) {
-    var all = Lampa.Storage.cache('z01_reach', 2000, {});
-    var mine = all[Z01UI.reachKey(movie)] || {};
+  FX1UI.reachEntry = function(movie, season) {
+    var all = Lampa.Storage.cache('fx1_reach', 2000, {});
+    var mine = all[FX1UI.reachKey(movie)] || {};
     var value = mine[season || 1];
     if (typeof value === 'number') return { e: value, l: value, r: 2 };
     if (value && typeof value === 'object') {
@@ -956,41 +955,41 @@
     return { e: 0, l: 0, r: 0 };
   };
 
-  Z01UI.reached = function(movie, season) { return Z01UI.reachEntry(movie, season).e; };
-  Z01UI.setReach = function(movie, season, episode) {
+  FX1UI.reached = function(movie, season) { return FX1UI.reachEntry(movie, season).e; };
+  FX1UI.setReach = function(movie, season, episode) {
     episode = parseInt(episode, 10) || 0;
-    var key = Z01UI.reachKey(movie);
+    var key = FX1UI.reachKey(movie);
     if (!key) return;
-    var all = Lampa.Storage.cache('z01_reach', 2000, {});
+    var all = Lampa.Storage.cache('fx1_reach', 2000, {});
     var mine = all[key] || {};
     mine[season || 1] = { e: episode, l: episode, r: episode ? 2 : 0 };
     all[key] = mine;
-    Lampa.Storage.set('z01_reach', all);
+    Lampa.Storage.set('fx1_reach', all);
   };
 
-  Z01UI.rememberReach = function(movie, season, episode) {
+  FX1UI.rememberReach = function(movie, season, episode) {
     episode = parseInt(episode, 10) || 0;
-    var key = Z01UI.reachKey(movie);
+    var key = FX1UI.reachKey(movie);
     if (!episode || !key) return;
-    var entry = Z01UI.reachEntry(movie, season);
+    var entry = FX1UI.reachEntry(movie, season);
     if (episode === entry.l || episode === entry.l + 1) entry.r = (entry.r || 0) + 1;
     else entry.r = 1;
     entry.l = episode;
     if (!entry.e || entry.r >= 2 || episode === entry.e + 1) entry.e = episode;
-    var all = Lampa.Storage.cache('z01_reach', 2000, {});
+    var all = Lampa.Storage.cache('fx1_reach', 2000, {});
     var mine = all[key] || {};
     mine[season || 1] = { e: entry.e, l: entry.l, r: entry.r };
     all[key] = mine;
-    Lampa.Storage.set('z01_reach', all);
+    Lampa.Storage.set('fx1_reach', all);
   };
 
-  Z01UI.episodeNumber = function(value) {
+  FX1UI.episodeNumber = function(value) {
     var num = parseInt(value, 10);
     if (!num && num !== 0) return String(value === undefined || value === null ? '' : value);
     return num < 10 ? '0' + num : String(num);
   };
 
-  Z01UI.icon = {
+  FX1UI.icon = {
     play: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"></path></svg>',
     check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M4 12l5 5L20 6" stroke-linecap="round" stroke-linejoin="round"></path></svg>',
     chevron: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"></path></svg>',
@@ -999,7 +998,7 @@
     warn: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 4l9 16H3z" stroke-linejoin="round"></path><path d="M12 10v4" stroke-linecap="round"></path><circle cx="12" cy="17" r="0.6" fill="currentColor"></circle></svg>'
   };
 
-  Z01UI.css = "<style>.mo{padding:0 0 3em 0}.mo *{-webkit-box-sizing:border-box;box-sizing:border-box}.mo-head{display:flex;align-items:center;padding:0 .2em .7em .2em}.mo-head__art{position:relative;width:4.6em;height:6.6em;flex-shrink:0;margin-right:1.1em;background:rgba(255,255,255,.07);border-radius:.35em;overflow:hidden}.mo-head__art img{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity .3s}.mo-head__art--loaded img{opacity:1}.mo-head__text{flex:1 1 auto;min-width:0;padding-right:1em}.mo-head__sub{font-size:1em;opacity:.45;line-height:1.3;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.mo-head__title{font-size:1.7em;font-weight:600;line-height:1.2;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.mo-head__note{font-size:1.05em;opacity:.7;white-space:nowrap;padding-bottom:.15em}.mo-head__bar{position:relative;height:.25em;border-radius:.25em;background:rgba(255,255,255,.12);margin:0 .2em 1.4em .2em;overflow:hidden}.mo-head__fill{position:absolute;left:0;top:0;bottom:0;background:#7cc4ff}.mo-head--hidden{display:none}.mo-panel{display:flex;flex-wrap:wrap;margin:0 0 1.3em 0}.mo-seg{position:relative;min-width:11em;max-width:24em;padding:.6em 2.2em .6em 1em;margin:0 .8em .6em 0;background:rgba(255,255,255,.08);border-radius:.35em;line-height:1.25}.mo-seg__name{font-size:.75em;letter-spacing:.06em;text-transform:uppercase;opacity:.5}.mo-seg__value{font-size:1.15em;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.mo-seg__mark{font-size:.68em;font-weight:600;padding:.1em .4em;margin-right:.5em;background:rgba(255,255,255,.2);border-radius:.25em;vertical-align:.15em}.mo-seg__arrow{position:absolute;right:.9em;top:50%;margin-top:-.2em;width:0;height:0;border-left:.4em solid transparent;border-right:.4em solid transparent;border-top:.45em solid rgba(255,255,255,.55)}.mo-seg.focus{background:#fff;color:#000}.mo-seg.focus .mo-seg__name{opacity:.6}.mo-seg.focus .mo-seg__mark{background:rgba(0,0,0,.15)}.mo-seg.focus .mo-seg__arrow{border-top-color:rgba(0,0,0,.6)}.mo-seg--open{background:rgba(124,196,255,.22)}.mo-grid{display:flex;flex-wrap:wrap;margin:0 -.3em 1.4em -.3em}.mo-opt{width:25%;padding:0 .3em .6em .3em}.mo-opt__in{position:relative;padding:.65em .8em;min-height:3.1em;background:rgba(255,255,255,.07);border-radius:.35em;line-height:1.3;overflow:hidden}.mo-opt__label{display:block;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.mo-opt__note{display:block;font-size:.8em;opacity:.5;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.mo-opt.focus .mo-opt__in{background:#fff;color:#000}.mo-opt.focus .mo-opt__note{opacity:.6}.mo-opt--active .mo-opt__in{box-shadow:inset 0 0 0 .12em #7cc4ff}.mo-opt__tag{display:inline-block;min-width:2.4em;text-align:center;font-size:.7em;font-weight:600;background:rgba(255,255,255,.18);border-radius:.25em;padding:.1em .3em;margin-right:.5em;vertical-align:.15em}.mo-opt.focus .mo-opt__tag{background:rgba(0,0,0,.14)}.mo-tiles{display:flex;flex-wrap:wrap;margin:0 -.45em}.mo-tile{width:25%;padding:0 .45em 1.1em .45em}.mo-tile__art{position:relative;padding-top:56%;background:rgba(255,255,255,.08);border-radius:.4em;overflow:hidden}.mo-tile__art img{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity .3s}.mo-tile__art--loaded img{opacity:1}.mo-tile__num{position:absolute;left:.5em;top:.45em;font-size:1.1em;font-weight:700;padding:.05em .45em;background:rgba(0,0,0,.55);border-radius:.25em}.mo-tile__tag{position:absolute;right:.5em;top:.45em;font-size:.72em;font-weight:600;padding:.15em .4em;background:rgba(0,0,0,.55);border-radius:.25em}.mo-tile__time{position:absolute;right:.5em;bottom:.5em;font-size:.8em;padding:.1em .4em;background:rgba(0,0,0,.55);border-radius:.25em}.mo-tile__check{position:absolute;left:.5em;bottom:.5em;width:1.5em;height:1.5em;padding:.25em;color:#0b0c12;background:#7bd88f;border-radius:100%}.mo-tile__check svg{width:100%;height:100%}.mo-tile__line{position:absolute;left:0;right:0;bottom:0;height:.25em}.mo-tile__line .time-line{display:block !important;height:100%;margin:0;background:rgba(0,0,0,.5)}.mo-tile__line .time-line>div{background:#7cc4ff}.mo-tile__body{padding:.5em .15em 0 .15em}.mo-tile__title{font-size:1.05em;line-height:1.35;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.mo-tile__meta{font-size:.85em;opacity:.5;line-height:1.4;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.mo-tile__meta span+span:before{content:\" · \"}.mo-tile--seen .mo-tile__art img{opacity:.45}.mo-tile--seen .mo-tile__title{opacity:.6}.mo-tile.focus .mo-tile__art{box-shadow:0 0 0 .2em #fff}.mo-tile--current .mo-tile__art{box-shadow:0 0 0 .16em #7cc4ff}.mo-tile.focus.mo-tile--current .mo-tile__art{box-shadow:0 0 0 .2em #fff}.mo-tile--soon{opacity:.45}.mo-line{position:relative;display:flex;align-items:center;padding:.6em 1em .65em .6em;margin-bottom:.45em;background:rgba(255,255,255,.06);border-radius:.4em}.mo-line__art{position:relative;width:4.4em;height:4.4em;flex-shrink:0;margin-right:1em;background:rgba(255,255,255,.08);border-radius:.3em;overflow:hidden}.mo-line__art img{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity .3s}.mo-line__art--loaded img{opacity:1}.mo-line__time{font-size:.9em;opacity:.6;margin-left:.7em}.mo-line__line{position:absolute;left:6.2em;right:1em;bottom:.35em;height:.16em}.mo-line__line .time-line{display:block !important;height:100%;margin:0;background:rgba(255,255,255,.14);border-radius:.16em;overflow:hidden}.mo-line__line .time-line>div{background:#7cc4ff}.mo-line.focus .mo-line__line .time-line{background:rgba(0,0,0,.15)}.mo-line.focus{background:#fff;color:#000}.mo-line--current{box-shadow:inset .18em 0 0 #7cc4ff}.mo-line__tag{font-size:.72em;font-weight:600;background:rgba(255,255,255,.18);border-radius:.25em;padding:.15em .45em;margin-left:.7em}.mo-line.focus .mo-line__tag{background:rgba(0,0,0,.14)}.mo-line__body{flex:1 1 auto;min-width:0}.mo-line__title{font-size:1.15em;line-height:1.35;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.mo-line__note{font-size:.85em;opacity:.55;line-height:1.4;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.mo-line__side{display:flex;align-items:center;flex-shrink:0;padding-left:1em}.mo-line--nav .mo-line__side:after{content:\"›\";font-size:1.5em;opacity:.6}.mo-info{padding:1.4em .2em}.mo-info__title{font-size:1.5em;font-weight:600;margin-bottom:.4em}.mo-info__text{font-size:1.05em;line-height:1.5;opacity:.7;margin-bottom:1.1em;max-width:44em}.mo-info__text img{max-width:12em;margin-top:.8em;display:block}.mo-info__link{font-size:.95em;opacity:.5;word-break:break-all;margin-bottom:1em}.mo-info__qr{margin-bottom:1.1em}.mo-info__qr img{display:block;width:11em;height:11em;background:#fff;padding:.4em;border-radius:.4em}.mo-info__acts{display:flex;flex-wrap:wrap}.mo-act{padding:.6em 1.4em;margin:0 .8em .6em 0;background:rgba(255,255,255,.12);border-radius:.35em;font-size:1.05em;white-space:nowrap}.mo-act.focus{background:#fff;color:#000}.mo-act>svg{width:1.1em;height:1.1em;margin-right:.5em;vertical-align:-.15em}.mo-wait{width:100%;padding:.2em .2em 1.2em .2em}.mo-wait__head{display:flex;align-items:baseline;margin-bottom:.5em}.mo-wait__title{font-size:1.25em;padding-right:.8em;flex:1 1 auto}.mo-wait__count{font-size:.95em;opacity:.55}.mo-wait__bar{position:relative;height:.25em;width:100%;max-width:24em;border-radius:.25em;background:rgba(255,255,255,.12);overflow:hidden}.mo-wait__fill{position:absolute;left:0;top:0;bottom:0;background:#7cc4ff;transition:width .4s}@media screen and (max-width:1300px){.mo-opt{width:33.333%}.mo-tile{width:33.333%}}@media screen and (max-width:900px){.mo-opt{width:50%}.mo-tile{width:50%}.mo-head__title{font-size:1.4em}}@media screen and (max-width:580px){.mo-opt{width:100%}.mo-seg{min-width:8em}}</style>";
+  FX1UI.css = "<style>.mo{padding:0 0 3em 0}.mo *{-webkit-box-sizing:border-box;box-sizing:border-box}.mo-head{display:flex;align-items:center;padding:0 .2em .7em .2em}.mo-head__art{position:relative;width:4.6em;height:6.6em;flex-shrink:0;margin-right:1.1em;background:rgba(255,255,255,.07);border-radius:.35em;overflow:hidden}.mo-head__art img{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity .3s}.mo-head__art--loaded img{opacity:1}.mo-head__text{flex:1 1 auto;min-width:0;padding-right:1em}.mo-head__sub{font-size:1em;opacity:.45;line-height:1.3;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.mo-head__title{font-size:1.7em;font-weight:600;line-height:1.2;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.mo-head__note{font-size:1.05em;opacity:.7;white-space:nowrap;padding-bottom:.15em}.mo-head__bar{position:relative;height:.25em;border-radius:.25em;background:rgba(255,255,255,.12);margin:0 .2em 1.4em .2em;overflow:hidden}.mo-head__fill{position:absolute;left:0;top:0;bottom:0;background:#7cc4ff}.mo-head--hidden{display:none}.mo-panel{display:flex;flex-wrap:wrap;margin:0 0 1.3em 0}.mo-seg{position:relative;min-width:11em;max-width:24em;padding:.6em 2.2em .6em 1em;margin:0 .8em .6em 0;background:rgba(255,255,255,.08);border-radius:.35em;line-height:1.25}.mo-seg__name{font-size:.75em;letter-spacing:.06em;text-transform:uppercase;opacity:.5}.mo-seg__value{font-size:1.15em;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.mo-seg__mark{font-size:.68em;font-weight:600;padding:.1em .4em;margin-right:.5em;background:rgba(255,255,255,.2);border-radius:.25em;vertical-align:.15em}.mo-seg__arrow{position:absolute;right:.9em;top:50%;margin-top:-.2em;width:0;height:0;border-left:.4em solid transparent;border-right:.4em solid transparent;border-top:.45em solid rgba(255,255,255,.55)}.mo-seg.focus{background:#fff;color:#000}.mo-seg.focus .mo-seg__name{opacity:.6}.mo-seg.focus .mo-seg__mark{background:rgba(0,0,0,.15)}.mo-seg.focus .mo-seg__arrow{border-top-color:rgba(0,0,0,.6)}.mo-seg--open{background:rgba(124,196,255,.22)}.mo-grid{display:flex;flex-wrap:wrap;margin:0 -.3em 1.4em -.3em}.mo-opt{width:25%;padding:0 .3em .6em .3em}.mo-opt__in{position:relative;padding:.65em .8em;min-height:3.1em;background:rgba(255,255,255,.07);border-radius:.35em;line-height:1.3;overflow:hidden}.mo-opt__label{display:block;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.mo-opt__note{display:block;font-size:.8em;opacity:.5;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.mo-opt.focus .mo-opt__in{background:#fff;color:#000}.mo-opt.focus .mo-opt__note{opacity:.6}.mo-opt--active .mo-opt__in{box-shadow:inset 0 0 0 .12em #7cc4ff}.mo-opt__tag{display:inline-block;min-width:2.4em;text-align:center;font-size:.7em;font-weight:600;background:rgba(255,255,255,.18);border-radius:.25em;padding:.1em .3em;margin-right:.5em;vertical-align:.15em}.mo-opt.focus .mo-opt__tag{background:rgba(0,0,0,.14)}.mo-tiles{display:flex;flex-wrap:wrap;margin:0 -.45em}.mo-tile{width:25%;padding:0 .45em 1.1em .45em}.mo-tile__art{position:relative;padding-top:56%;background:rgba(255,255,255,.08);border-radius:.4em;overflow:hidden}.mo-tile__art img{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity .3s}.mo-tile__art--loaded img{opacity:1}.mo-tile__num{position:absolute;left:.5em;top:.45em;font-size:1.1em;font-weight:700;padding:.05em .45em;background:rgba(0,0,0,.55);border-radius:.25em}.mo-tile__tag{position:absolute;right:.5em;top:.45em;font-size:.72em;font-weight:600;padding:.15em .4em;background:rgba(0,0,0,.55);border-radius:.25em}.mo-tile__time{position:absolute;right:.5em;bottom:.5em;font-size:.8em;padding:.1em .4em;background:rgba(0,0,0,.55);border-radius:.25em}.mo-tile__check{position:absolute;left:.5em;bottom:.5em;width:1.5em;height:1.5em;padding:.25em;color:#0b0c12;background:#7bd88f;border-radius:100%}.mo-tile__check svg{width:100%;height:100%}.mo-tile__line{position:absolute;left:0;right:0;bottom:0;height:.25em}.mo-tile__line .time-line{display:block !important;height:100%;margin:0;background:rgba(0,0,0,.5)}.mo-tile__line .time-line>div{background:#7cc4ff}.mo-tile__body{padding:.5em .15em 0 .15em}.mo-tile__title{font-size:1.05em;line-height:1.35;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.mo-tile__meta{font-size:.85em;opacity:.5;line-height:1.4;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.mo-tile__meta span+span:before{content:\" · \"}.mo-tile--seen .mo-tile__art img{opacity:.45}.mo-tile--seen .mo-tile__title{opacity:.6}.mo-tile.focus .mo-tile__art{box-shadow:0 0 0 .2em #fff}.mo-tile--current .mo-tile__art{box-shadow:0 0 0 .16em #7cc4ff}.mo-tile.focus.mo-tile--current .mo-tile__art{box-shadow:0 0 0 .2em #fff}.mo-tile--soon{opacity:.45}.mo-line{position:relative;display:flex;align-items:center;padding:.6em 1em .65em .6em;margin-bottom:.45em;background:rgba(255,255,255,.06);border-radius:.4em}.mo-line__art{position:relative;width:4.4em;height:4.4em;flex-shrink:0;margin-right:1em;background:rgba(255,255,255,.08);border-radius:.3em;overflow:hidden}.mo-line__art img{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity .3s}.mo-line__art--loaded img{opacity:1}.mo-line__time{font-size:.9em;opacity:.6;margin-left:.7em}.mo-line__line{position:absolute;left:6.2em;right:1em;bottom:.35em;height:.16em}.mo-line__line .time-line{display:block !important;height:100%;margin:0;background:rgba(255,255,255,.14);border-radius:.16em;overflow:hidden}.mo-line__line .time-line>div{background:#7cc4ff}.mo-line.focus .mo-line__line .time-line{background:rgba(0,0,0,.15)}.mo-line.focus{background:#fff;color:#000}.mo-line--current{box-shadow:inset .18em 0 0 #7cc4ff}.mo-line__tag{font-size:.72em;font-weight:600;background:rgba(255,255,255,.18);border-radius:.25em;padding:.15em .45em;margin-left:.7em}.mo-line.focus .mo-line__tag{background:rgba(0,0,0,.14)}.mo-line__body{flex:1 1 auto;min-width:0}.mo-line__title{font-size:1.15em;line-height:1.35;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.mo-line__note{font-size:.85em;opacity:.55;line-height:1.4;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.mo-line__side{display:flex;align-items:center;flex-shrink:0;padding-left:1em}.mo-line--nav .mo-line__side:after{content:\"›\";font-size:1.5em;opacity:.6}.mo-info{padding:1.4em .2em}.mo-info__title{font-size:1.5em;font-weight:600;margin-bottom:.4em}.mo-info__text{font-size:1.05em;line-height:1.5;opacity:.7;margin-bottom:1.1em;max-width:44em}.mo-info__text img{max-width:12em;margin-top:.8em;display:block}.mo-info__link{font-size:.95em;opacity:.5;word-break:break-all;margin-bottom:1em}.mo-info__qr{margin-bottom:1.1em}.mo-info__qr img{display:block;width:11em;height:11em;background:#fff;padding:.4em;border-radius:.4em}.mo-info__acts{display:flex;flex-wrap:wrap}.mo-act{padding:.6em 1.4em;margin:0 .8em .6em 0;background:rgba(255,255,255,.12);border-radius:.35em;font-size:1.05em;white-space:nowrap}.mo-act.focus{background:#fff;color:#000}.mo-act>svg{width:1.1em;height:1.1em;margin-right:.5em;vertical-align:-.15em}.mo-wait{width:100%;padding:.2em .2em 1.2em .2em}.mo-wait__head{display:flex;align-items:baseline;margin-bottom:.5em}.mo-wait__title{font-size:1.25em;padding-right:.8em;flex:1 1 auto}.mo-wait__count{font-size:.95em;opacity:.55}.mo-wait__bar{position:relative;height:.25em;width:100%;max-width:24em;border-radius:.25em;background:rgba(255,255,255,.12);overflow:hidden}.mo-wait__fill{position:absolute;left:0;top:0;bottom:0;background:#7cc4ff;transition:width .4s}@media screen and (max-width:1300px){.mo-opt{width:33.333%}.mo-tile{width:33.333%}}@media screen and (max-width:900px){.mo-opt{width:50%}.mo-tile{width:50%}.mo-head__title{font-size:1.4em}}@media screen and (max-width:580px){.mo-opt{width:100%}.mo-seg{min-width:8em}}</style>";
 
   function component(object) {
     var network = new Network();
@@ -1052,7 +1051,7 @@
       Lampa.Storage.set('clarification_search',all);
     }
 
-    var modern = Z01UI.enabled();
+    var modern = FX1UI.enabled();
     var ui = {};
     var ui_items = [];
     var ui_enter = null;
@@ -1124,15 +1123,15 @@
 
     this.uiLoadingPanel = function() {
       this.uiFrame();
-      this.uiWatch(Z01UI.WATCHDOG_FIRST);
-      this.uiWaitStart(Lampa.Lang.translate('z01_loading_title'), false);
+      this.uiWatch(FX1UI.WATCHDOG_FIRST);
+      this.uiWaitStart(Lampa.Lang.translate('fx1_loading_title'), false);
     };
 
     this.uiLoadingText = function() {
       if (!ui.load || !ui.load.parent().length) return this.uiLoadingStop();
       var seconds = Math.max(0, Math.round((Date.now() - ui_load_started) / 1000));
-      var text = (!ui_load_simple ? (ui_load_found ? Lampa.Lang.translate('z01_loading_found').replace('{n}', ui_load_found) : Lampa.Lang.translate('z01_loading_start')) + ' · ' : '') + seconds + Lampa.Lang.translate('z01_sec');
-      if (seconds >= 12 && ui_load_percent < 100) text += ' · ' + Lampa.Lang.translate('z01_loading_slow');
+      var text = (!ui_load_simple ? (ui_load_found ? Lampa.Lang.translate('fx1_loading_found').replace('{n}', ui_load_found) : Lampa.Lang.translate('fx1_loading_start')) + ' · ' : '') + seconds + Lampa.Lang.translate('fx1_sec');
+      if (seconds >= 12 && ui_load_percent < 100) text += ' · ' + Lampa.Lang.translate('fx1_loading_slow');
       ui.load.find('.mo-wait__count').text(text);
       var percent = Math.max(ui_load_percent, Math.min(90, seconds * 7));
       ui.load.find('.mo-wait__fill').css('width', percent + '%');
@@ -1145,7 +1144,7 @@
       list.forEach(function(item) { if (item.show) found++; });
       ui_load_found = found;
       ui_load_percent = json && json.ready ? 100 : Math.min(95, Math.round((times / 15) * 100));
-      this.uiWatch(Z01UI.WATCHDOG_FIRST);
+      this.uiWatch(FX1UI.WATCHDOG_FIRST);
       this.uiLoadingText();
     };
 
@@ -1163,7 +1162,7 @@
         if (Lampa.Activity.active().activity !== _this.activity) return;
         network.clear();
         _this.doesNotAnswer({ timeout: true });
-      }, (seconds || Z01UI.WATCHDOG) * 1000);
+      }, (seconds || FX1UI.WATCHDOG) * 1000);
     };
 
     this.uiWatchStop = function() {
@@ -1179,7 +1178,7 @@
       network.clear();
       clearInterval(balanser_timer);
       this.clearImages();
-      this.uiWaitStart(Lampa.Lang.translate('z01_loading_list'), true);
+      this.uiWaitStart(Lampa.Lang.translate('fx1_loading_list'), true);
       this.activity.loader(false);
       this.activity.toggle();
     };
@@ -1207,17 +1206,17 @@
             if (items[i].hash_behold == movie_choice.movie_view) return items[i];
           }
         }
-        var pref = Lampa.Storage.get('z01_voice_pref', '');
+        var pref = Lampa.Storage.get('fx1_voice_pref', '');
         if (pref) {
           for (i = 0; i < items.length; i++) {
-            if (Z01UI.voiceKind(items[i].title || items[i].text) == pref) return items[i];
+            if (FX1UI.voiceKind(items[i].title || items[i].text) == pref) return items[i];
           }
         }
         return items[0];
       }
       var choice = this.getChoice();
       var season = items[0].season;
-      var reached = Z01UI.reached(object.movie, season);
+      var reached = FX1UI.reached(object.movie, season);
       if (!reached) {
         var mark = choice.episodes_view ? parseInt(choice.episodes_view[season], 10) : 0;
         if (mark > reached) reached = mark;
@@ -1227,7 +1226,7 @@
           if (last_seen > reached) reached = last_seen;
         }
         for (i = 0; i < items.length; i++) {
-          if (Z01UI.isSeen(items[i], viewed)) {
+          if (FX1UI.isSeen(items[i], viewed)) {
             var num = parseInt(items[i].episode, 10) || 0;
             if (num > reached) reached = num;
           }
@@ -1239,7 +1238,7 @@
             var line = items[i].timeline;
             if (line && line.percent > 0 && line.percent < 90) return items[i];
             for (var j = i + 1; j < items.length; j++) {
-              if (!Z01UI.isSeen(items[j], viewed)) return items[j];
+              if (!FX1UI.isSeen(items[j], viewed)) return items[j];
             }
             return items[i + 1] || items[i];
           }
@@ -1253,7 +1252,7 @@
         return items[items.length - 1];
       }
       for (i = 0; i < items.length; i++) {
-        if (!Z01UI.isSeen(items[i], viewed)) return items[i];
+        if (!FX1UI.isSeen(items[i], viewed)) return items[i];
       }
       return items[0];
     };
@@ -1266,7 +1265,7 @@
       var viewed = Lampa.Storage.cache('online_view', 5000, []);
       var seen = 0;
       for (var i = 0; i < items.length; i++) {
-        if (Z01UI.isSeen(items[i], viewed)) seen++;
+        if (FX1UI.isSeen(items[i], viewed)) seen++;
       }
       var title = '';
       if (serial) {
@@ -1280,13 +1279,13 @@
       } else title = object.movie.title || object.movie.name || '';
       var note = '';
       if (serial && items.length > 1) {
-        note = Lampa.Lang.translate('z01_season_progress').replace('{seen}', seen).replace('{total}', items.length);
-        if (seen < items.length) note += ' · ' + Lampa.Lang.translate('z01_season_left').replace('{left}', items.length - seen);
+        note = Lampa.Lang.translate('fx1_season_progress').replace('{seen}', seen).replace('{total}', items.length);
+        if (seen < items.length) note += ' · ' + Lampa.Lang.translate('fx1_season_left').replace('{left}', items.length - seen);
       } else {
         var target = this.uiPickResume(items);
         var line = target && target.timeline;
         if (line && line.percent > 0 && line.duration > line.time) {
-          note = Lampa.Lang.translate('z01_left') + ' ' + Lampa.Utils.secondsToTime(line.duration - line.time, true);
+          note = Lampa.Lang.translate('fx1_left') + ' ' + Lampa.Utils.secondsToTime(line.duration - line.time, true);
         }
       }
       var head = $('<div class="mo-head"><div class="mo-head__text"><div class="mo-head__title"></div><div class="mo-head__sub"></div></div><div class="mo-head__note"></div></div>');
@@ -1349,8 +1348,8 @@
 
       if (!object.balanser && sourceKeys().length && balanser) {
         var info = sources[balanser] || {};
-        var parts = Z01UI.splitSourceName(info.name || balanser);
-        addSeg('source', Lampa.Lang.translate('lampac_balanser'), parts.name, Z01UI.sourceBadge(balanser, parts));
+        var parts = FX1UI.splitSourceName(info.name || balanser);
+        addSeg('source', Lampa.Lang.translate('lampac_balanser'), parts.name, FX1UI.sourceBadge(balanser, parts));
       }
 
       var choice = this.getChoice();
@@ -1367,7 +1366,7 @@
       if (similar_list && similar_list.length > 1 && !similar_shown) {
         var back = $('<div class="mo-seg selector"><div class="mo-seg__name"></div><div class="mo-seg__value"></div></div>');
         back.attr('data-mo-focus', 'variants');
-        back.find('.mo-seg__name').text(Lampa.Lang.translate('z01_similar_all'));
+        back.find('.mo-seg__name').text(Lampa.Lang.translate('fx1_similar_all'));
         back.find('.mo-seg__value').text(similar_list.length);
         back.on('hover:enter', function() {
           var saved = similar_list;
@@ -1391,7 +1390,7 @@
       var rank = function(name) { return (name == balanser) ? -1 : ((sources[name] && sources[name].show) ? 0 : 1); };
       var quality = function(name) {
         var info = sources[name] || {};
-        return Z01UI.qualityRank(Z01UI.sourceBadge(name, Z01UI.splitSourceName(info.name || name)));
+        return FX1UI.qualityRank(FX1UI.sourceBadge(name, FX1UI.splitSourceName(info.name || name)));
       };
       return names.map(function(name, index) { return { name: name, index: index }; }).sort(function(a, b) {
         return (rank(a.name) - rank(b.name)) || (quality(b.name) - quality(a.name)) || (a.index - b.index);
@@ -1433,7 +1432,7 @@
       var grid = $('<div class="mo-grid"></div>');
       var rows = [];
       if (type == 'voice') {
-        Z01UI.voiceGroups(list).forEach(function(group) {
+        FX1UI.voiceGroups(list).forEach(function(group) {
           group.items.forEach(function(entry) {
             rows.push({ index: entry.index, title: entry.title, note: group.title || '' });
           });
@@ -1471,13 +1470,13 @@
         var voice = filter_find.voice[index];
         if (voice) {
           choice.voice_name = voice.title;
-          Lampa.Storage.set('z01_voice_pref', Z01UI.voiceKind(voice.title));
+          Lampa.Storage.set('fx1_voice_pref', FX1UI.voiceKind(voice.title));
         }
       }
       if (type == 'season') {
         var season = filter_find.season[index];
         if (season) {
-          var number = Z01UI.seasonNumber(season.title);
+          var number = FX1UI.seasonNumber(season.title);
           if (number) this.seasonMemory(number);
         }
         season_pinned = true;
@@ -1502,18 +1501,17 @@
       var grid = $('<div class="mo-grid"></div>');
       this.sourceOrder(visible).forEach(function(name) {
         var info = sources[name] || {};
-        var parts = Z01UI.splitSourceName(info.name || name);
+        var parts = FX1UI.splitSourceName(info.name || name);
         var opt = $('<div class="mo-opt selector"><div class="mo-opt__in"><span class="mo-opt__label"></span><span class="mo-opt__note"></span></div></div>');
         opt.attr('data-mo-focus', 'src:' + name);
         var label = opt.find('.mo-opt__label');
-        var tag = Z01UI.sourceBadge(name, parts);
+        var tag = FX1UI.sourceBadge(name, parts);
         if (info.vip) label.append('<span class="mo-opt__tag">VIP</span>');
         else if (tag) label.append($('<span class="mo-opt__tag"></span>').text(tag));
         label.append(document.createTextNode(parts.name));
         if (name == balanser) opt.addClass('mo-opt--active');
         opt.on('hover:enter', function() {
           if (info.vip && !isZpremActive()) {
-            Lampa.Noty.show('Активация VIP-доступа...');
             zpremAutoEnsure(function(ok) {
               if (ok) {
                 ui_open = '';
@@ -1600,7 +1598,7 @@
       var link = params.qr || params.link || '';
       if (link) {
         var qr = $('<div class="mo-info__qr"><img alt=""></div>');
-        qr.find('img').attr('src', Z01UI.qrImage(link));
+        qr.find('img').attr('src', FX1UI.qrImage(link));
         note.find('.mo-info__text').after($('<div class="mo-info__link"></div>').text(link)).after(qr);
       }
       ui.list.empty().append(note);
@@ -1643,7 +1641,7 @@
         }
       }
       if (changed) Lampa.Storage.set('online_view', viewed);
-      Z01UI.setReach(object.movie, element.season, upto);
+      FX1UI.setReach(object.movie, element.season, upto);
       var choice = this.getChoice();
       if (element.season) choice.episodes_view[element.season] = upto;
       this.saveChoice(choice);
@@ -1660,7 +1658,7 @@
       ui_items = items;
       ui_enter = params.onEnter;
       similar_shown = false;
-      if (!params.similars) Z01UI.rememberQuality(balanser, Z01UI.bestQuality(items));
+      if (!params.similars) FX1UI.rememberQuality(balanser, FX1UI.bestQuality(items));
       var serial = object.movie.name ? true : false;
       var title_count = {};
       items.forEach(function(item) {
@@ -1672,7 +1670,7 @@
       };
       ui_nav = items.length > 1 && items.every(function(item) {
         var text = item.text || item.title || '';
-        if (Z01UI.isSeasonLabel(text)) return true;
+        if (FX1UI.isSeasonLabel(text)) return true;
         return serial && typeof item.episode === 'undefined' && !looksEpisode(text);
       });
       var draw_gen = request_gen;
@@ -1699,7 +1697,7 @@
         items.forEach(function(element, index) {
           var episode = serial && episodes.length && !params.similars ? arrFind(episodes, function(e) { return e.episode_number == element.episode; }) : false;
           var episode_num = element.episode || index + 1;
-          var voice_name = (!serial && (element.voice_name || element.text)) || choice.voice_name || (filter_find.voice[0] ? filter_find.voice[0].title : false) || element.voice_name || (serial ? Lampa.Lang.translate('z01_unknown') : element.text) || Lampa.Lang.translate('z01_unknown');
+          var voice_name = (!serial && (element.voice_name || element.text)) || choice.voice_name || (filter_find.voice[0] ? filter_find.voice[0].title : false) || element.voice_name || (serial ? Lampa.Lang.translate('fx1_unknown') : element.text) || Lampa.Lang.translate('fx1_unknown');
           if (element.quality) {
             element.qualitys = element.quality;
             element.quality = Lampa.Arrays.getKeys(element.quality)[0];
@@ -1723,22 +1721,22 @@
           if (episode && episode.vote_average) meta.push('★ ' + parseFloat(episode.vote_average + '').toFixed(1));
           if (episode && episode.air_date && fully) meta.push(Lampa.Utils.parseTime(episode.air_date).full);
           else if (!episode && object.movie.release_date && fully && serial) meta.push(Lampa.Utils.parseTime(object.movie.release_date).full);
-          if (!serial && !ui_nav && voice_name && voice_name !== title && voice_name !== Lampa.Lang.translate('z01_unknown')) meta.push(voice_name);
+          if (!serial && !ui_nav && voice_name && voice_name !== title && voice_name !== Lampa.Lang.translate('fx1_unknown')) meta.push(voice_name);
           element.__meta_base = meta.slice();
           element.__own_line = !ui_nav && (serial || choice.movie_view === hash_behold);
           var seen_line = element.timeline;
           if (element.__own_line && seen_line && seen_line.percent > 0 && seen_line.duration > seen_line.time) {
-            meta.push(Lampa.Lang.translate('z01_left') + ' ' + Lampa.Utils.secondsToTime(seen_line.duration - seen_line.time, true));
+            meta.push(Lampa.Lang.translate('fx1_left') + ' ' + Lampa.Utils.secondsToTime(seen_line.duration - seen_line.time, true));
           }
           var tile = serial && !ui_nav;
           var html;
           if (tile) {
             html = $('<div class="mo-tile selector"><div class="mo-tile__art"><img alt=""><div class="mo-tile__num"></div><div class="mo-tile__line"></div></div><div class="mo-tile__body"><div class="mo-tile__title"></div><div class="mo-tile__meta"></div></div></div>');
             html.find('.mo-tile__title').text(title);
-            html.find('.mo-tile__meta').html(meta.map(function(part) { return '<span>' + Z01UI.esc(part) + '</span>'; }).join(''));
-            html.find('.mo-tile__num').text(Z01UI.episodeNumber(episode_num));
+            html.find('.mo-tile__meta').html(meta.map(function(part) { return '<span>' + FX1UI.esc(part) + '</span>'; }).join(''));
+            html.find('.mo-tile__num').text(FX1UI.episodeNumber(episode_num));
             var art_box = html.find('.mo-tile__art');
-            var badge = Z01UI.shortQuality(element.quality);
+            var badge = FX1UI.shortQuality(element.quality);
             if (badge) art_box.append($('<div class="mo-tile__tag"></div>').text(badge));
             if (element.time) art_box.append($('<div class="mo-tile__time"></div>').text(element.time));
             if (element.timeline && element.__own_line) html.find('.mo-tile__line').append(Lampa.Timeline.render(element.timeline));
@@ -1756,7 +1754,7 @@
             html.find('.mo-line__title').text(title);
             html.find('.mo-line__note').text(meta.join(' · '));
             var side_box = html.find('.mo-line__side');
-            var line_badge = Z01UI.shortQuality(element.quality);
+            var line_badge = FX1UI.shortQuality(element.quality);
             if (line_badge) side_box.append($('<div class="mo-line__tag"></div>').text(line_badge));
             if (element.time) side_box.append($('<div class="mo-line__time"></div>').text(element.time));
             if (element.timeline && element.__own_line && element.timeline.percent > 0) {
@@ -1768,7 +1766,7 @@
               html.find('.mo-line__line').remove();
               side_box.empty();
               if (title_count[title] > 1) {
-                var provider = Z01UI.providerName(element.url);
+                var provider = FX1UI.providerName(element.url);
                 if (provider) html.find('.mo-line__note').text(provider);
               }
             } else {
@@ -1791,10 +1789,10 @@
             var row = element.__html;
             row.addClass('mo-tile--seen');
             if (!row.find('.mo-tile__check').length) {
-              row.find('.mo-tile__art').append('<div class="mo-tile__check">' + Z01UI.icon.check + '</div>');
+              row.find('.mo-tile__art').append('<div class="mo-tile__check">' + FX1UI.icon.check + '</div>');
             }
           };
-          if (!ui_nav && Z01UI.isSeen(element, viewed)) {
+          if (!ui_nav && FX1UI.isSeen(element, viewed)) {
             focus_mark = html;
             addViewed();
           }
@@ -1814,7 +1812,7 @@
             if (!serial) choice.movie_view = hash_behold;
             else {
               choice.episodes_view[element.season] = episode_num;
-              Z01UI.rememberReach(object.movie, element.season, episode_num);
+              FX1UI.rememberReach(object.movie, element.season, episode_num);
             }
             _this.saveChoice(choice);
             var voice_text = choice.voice_name || element.voice_name || element.title;
@@ -1887,9 +1885,9 @@
             var air = new Date((episode.air_date + '').replace(/-/g, '/'));
             var days = Math.round((air.getTime() - Date.now()) / (24 * 60 * 60 * 1000));
             var row = $('<div class="mo-tile mo-tile--soon"><div class="mo-tile__art"><img alt=""><div class="mo-tile__num"></div></div><div class="mo-tile__body"><div class="mo-tile__title"></div><div class="mo-tile__meta"></div></div></div>');
-            row.find('.mo-tile__num').text(Z01UI.episodeNumber(episode.episode_number));
+            row.find('.mo-tile__num').text(FX1UI.episodeNumber(episode.episode_number));
             row.find('.mo-tile__title').text(episode.name || '');
-            row.find('.mo-tile__meta').html(meta.map(function(part) { return '<span>' + Z01UI.esc(part) + '</span>'; }).join(''));
+            row.find('.mo-tile__meta').html(meta.map(function(part) { return '<span>' + FX1UI.esc(part) + '</span>'; }).join(''));
             if (days > 0) row.find('.mo-tile__art').append($('<div class="mo-tile__time"></div>').text(Lampa.Lang.translate('full_episode_days_left') + ': ' + days));
             var soon_box = row.find('.mo-tile__art');
             var soon_art = episode.still_path ? Lampa.TMDB.image('t/p/w300' + episode.still_path) : _this.uiFallbackArt();
@@ -1948,16 +1946,16 @@
         if (element.__meta_base) {
           var meta = element.__meta_base.slice();
           if (element.__own_line && line && line.percent > 0 && line.duration > line.time) {
-            meta.push(Lampa.Lang.translate('z01_left') + ' ' + Lampa.Utils.secondsToTime(line.duration - line.time, true));
+            meta.push(Lampa.Lang.translate('fx1_left') + ' ' + Lampa.Utils.secondsToTime(line.duration - line.time, true));
           }
           if (tile) {
-            html.find('.mo-tile__meta').html(meta.map(function(part) { return '<span>' + Z01UI.esc(part) + '</span>'; }).join(''));
+            html.find('.mo-tile__meta').html(meta.map(function(part) { return '<span>' + FX1UI.esc(part) + '</span>'; }).join(''));
           } else html.find('.mo-line__note').text(meta.join(' · '));
         }
-        if (tile && Z01UI.isSeen(element, viewed)) {
+        if (tile && FX1UI.isSeen(element, viewed)) {
           html.addClass('mo-tile--seen');
           if (!html.find('.mo-tile__check').length) {
-            html.find('.mo-tile__art').append('<div class="mo-tile__check">' + Z01UI.icon.check + '</div>');
+            html.find('.mo-tile__art').append('<div class="mo-tile__check">' + FX1UI.icon.check + '</div>');
           }
         }
       });
@@ -1967,9 +1965,10 @@
       this.uiStatus(ui_items);
     };
 
-    this.uiSimilars = function(json, manual) {
+    // ==================== [КОНЕЦ ЧАСТИ 1] ====================
+this.uiSimilars = function(json, manual) {
       var _this = this;
-      var rank = Z01UI.rankSimilars(json, object.movie);
+      var rank = FX1UI.rankSimilars(json, object.movie);
       if (!manual && !similar_auto && rank.sure) {
         similar_list = json;
         similar_auto = true;
@@ -1991,10 +1990,10 @@
         if (elem.details) info.push(elem.details);
         var html = $('<div class="mo-tile selector"><div class="mo-tile__art"><img alt=""></div><div class="mo-tile__body"><div class="mo-tile__title"></div><div class="mo-tile__meta"></div></div></div>');
         html.find('.mo-tile__title').text(elem.title || elem.text || '');
-        html.find('.mo-tile__meta').html(info.map(function(part) { return '<span>' + Z01UI.esc(part) + '</span>'; }).join(''));
+        html.find('.mo-tile__meta').html(info.map(function(part) { return '<span>' + FX1UI.esc(part) + '</span>'; }).join(''));
         if (rank.likely && row === rank.best) {
           html.addClass('mo-tile--current');
-          html.find('.mo-tile__art').append($('<div class="mo-tile__tag"></div>').text(Lampa.Lang.translate('z01_similar_best')));
+          html.find('.mo-tile__art').append($('<div class="mo-tile__tag"></div>').text(Lampa.Lang.translate('fx1_similar_best')));
         }
         if (elem.img) {
           var art = elem.img;
@@ -2028,6 +2027,7 @@
       Lampa.Controller.enable('content');
     };
 
+    // Скрытое переподключение VIP: ротирует демо на лету без показа сторонних ссылок
     this.vipOffer = function(a) {
       var _this = this;
       Lampa.Noty.show('Подключение к VIP источнику...');
@@ -2075,7 +2075,7 @@
           } else {
             var url = filter_find[a.stype][b.index].url;
             var choice = _this.getChoice();
-            if (a.stype == 'season') _this.seasonMemory(Z01UI.seasonNumber(filter_find.season[b.index].title));
+            if (a.stype == 'season') _this.seasonMemory(FX1UI.seasonNumber(filter_find.season[b.index].title));
             if (a.stype == 'voice') {
               choice.voice_name = filter_find.voice[b.index].title;
               choice.voice_url = url;
@@ -2207,7 +2207,7 @@
       return last_select_balanser[object.movie.id] || Lampa.Storage.get('online_balanser', filter_sources.length ? filter_sources[0] : '');
     };
 
-    var acceptSource = function(key, title) { return !object.movie.name || !Z01UI.isMovieOnlySource(key, title); };
+    var acceptSource = function(key, title) { return !object.movie.name || !FX1UI.isMovieOnlySource(key, title); };
 
     this.startSource = function(json) {
       return new Promise(function(resolve, reject) {
@@ -2245,7 +2245,7 @@
         var url = _this3.requestParams(Defined.localhost + 'lifeevents?memkey=' + (_this3.memkey || ''));
         var red = false;
         var gou = function gou(json, any) {
-          if (json.accsdb || Z01UI.serverDenial(json)) return reject(json);
+          if (json.accsdb || FX1UI.serverDenial(json)) return reject(json);
           var last_balanser = _this3.getLastChoiceBalanser();
           if (!red) {
             var _filter = json.online.filter(function(c) { return any ? c.show : c.show && c.name.toLowerCase() == last_balanser; });
@@ -2310,7 +2310,7 @@
         var url = _this4.requestParams(Defined.localhost + 'lite/events?life=true');
         network.timeout(15000);
         network.silent(account(url), function(json) {
-          if (json.accsdb || Z01UI.serverDenial(json)) return reject(json);
+          if (json.accsdb || FX1UI.serverDenial(json)) return reject(json);
           if (json.life) {
             _this4.memkey = json.memkey;
             if (json.title) {
@@ -2342,7 +2342,7 @@
       if (number_of_requests < 10) {
         this.uiWatch();
         var gen = ++request_gen;
-        network.timeout(Z01UI.REQUEST_TIMEOUT);
+        network.timeout(FX1UI.REQUEST_TIMEOUT);
         network["native"](account(url), function(str) {
           if (gen !== request_gen) return;
           _this.parse(str);
@@ -2402,7 +2402,7 @@
           Lampa.Controller.toggle('content');
           network.clear();
         });
-        network.timeout(Z01UI.REQUEST_TIMEOUT);
+        network.timeout(FX1UI.REQUEST_TIMEOUT);
         network["native"](account(file.url), function(json) {
           if(json.rch){
             if(waiting_rch) {
@@ -2571,12 +2571,12 @@
       try {
         var items = this.parseJsonDate(str, '.videos__item');
         var buttons = this.parseJsonDate(str, '.videos__button');
-        var season_buttons = buttons.filter(function(b) { return Z01UI.isSeasonLabel(b.text); });
+        var season_buttons = buttons.filter(function(b) { return FX1UI.isSeasonLabel(b.text); });
         if (season_buttons.length > 1) {
           filter_find.season = season_buttons.map(function(b) { return { title: b.text, url: b.url }; });
           var active_season = arrFind(season_buttons, function(b) { return b.active; });
           if (active_season) this.replaceChoice({ season: season_buttons.indexOf(active_season) });
-          buttons = buttons.filter(function(b) { return !Z01UI.isSeasonLabel(b.text); });
+          buttons = buttons.filter(function(b) { return !FX1UI.isSeasonLabel(b.text); });
           if (!season_pinned) {
             season_pinned = true;
             var wanted_season = this.seasonIndexByMemory();
@@ -2604,10 +2604,10 @@
               var find_voice_url = arrFind(buttons, function(v) { return v.url == select_voice_url; });
               var find_voice_name = arrFind(buttons, function(v) { return v.text == select_voice_name; });
               var find_voice_active = arrFind(buttons, function(v) { return v.active; });
-              var pref_kind = Lampa.Storage.get('z01_voice_pref', '');
+              var pref_kind = Lampa.Storage.get('fx1_voice_pref', '');
               var find_voice_pref = false;
               if (modern && pref_kind && !select_voice_url && !select_voice_name) {
-                find_voice_pref = arrFind(buttons, function(v) { return Z01UI.voiceKind(v.text) == pref_kind; });
+                find_voice_pref = arrFind(buttons, function(v) { return FX1UI.voiceKind(v.text) == pref_kind; });
               }
               if (find_voice_url && !find_voice_url.active) {
                 this.replaceChoice({ voice: buttons.indexOf(find_voice_url), voice_name: find_voice_url.text });
@@ -2697,11 +2697,11 @@
     };
 
     this.seasonMemory = function(number) {
-      var all = Lampa.Storage.cache('z01_season_last', 3000, {});
+      var all = Lampa.Storage.cache('fx1_season_last', 3000, {});
       if (number === undefined) return all[object.movie.id];
       if (!number) return;
       all[object.movie.id] = number;
-      Lampa.Storage.set('z01_season_last', all);
+      Lampa.Storage.set('fx1_season_last', all);
     };
 
     this.seasonIndexByMemory = function() {
@@ -2709,7 +2709,7 @@
       if (!wanted) return -1;
       var list = filter_find.season || [];
       for (var i = 0; i < list.length; i++) {
-        if (Z01UI.seasonNumber(list[i].title) == wanted) return i;
+        if (FX1UI.seasonNumber(list[i].title) == wanted) return i;
       }
       return -1;
     };
@@ -2749,7 +2749,7 @@
       network.clear();
       this.clearImages();
       if (modern && ui.root) {
-        this.uiWaitStart(Lampa.Lang.translate('z01_loading_list'), true);
+        this.uiWaitStart(Lampa.Lang.translate('fx1_loading_list'), true);
         return;
       }
       scroll.render().find('.empty').remove();
@@ -2932,7 +2932,7 @@
             if (!serial) choice.movie_view = hash_behold;
             else {
               choice.episodes_view[element.season] = episode_num;
-              Z01UI.rememberReach(object.movie, element.season, episode_num);
+              FX1UI.rememberReach(object.movie, element.season, episode_num);
             }
             _this8.saveChoice(choice);
             var voice_name_text = choice.voice_name || element.voice_name || element.title;
@@ -2986,12 +2986,12 @@
             if (episode.air_date) info.push(Lampa.Utils.parseTime(episode.air_date).full);
             var air = new Date((episode.air_date + '').replace(/-/g, '/'));
             var days = Math.round((air.getTime() - Date.now()) / (24 * 60 * 60 * 1000));
-            var txt = Lampa.Lang.translate('full_episode_days_left') + ': ' + day;
+            var txt = Lampa.Lang.translate('full_episode_days_left') + ': ' + days;
             var html = Lampa.Template.get('lampac_prestige_full', {
               time: Lampa.Utils.secondsToTime((episode ? episode.runtime : object.movie.runtime) * 60, true),
               info: info.length ? info.map(function(i) { return '<span>' + i + '</span>'; }).join('<span class="online-prestige-split">●</span>') : '',
               title: episode.name,
-              quality: day > 0 ? txt : ''
+              quality: days > 0 ? txt : ''
             });
             var loader = html.find('.online-prestige__loader');
             var image = html.find('.online-prestige__img');
@@ -3003,13 +3003,13 @@
               img.onload = function() {
                 image.addClass('online-prestige__img--loaded');
                 loader.remove();
-                image.append('<div class=\"online-prestige__episode-number\">' + ('0' + episode.episode_number).slice(-2) + '</div>');
+                image.append('<div class="online-prestige__episode-number">' + ('0' + episode.episode_number).slice(-2) + '</div>');
               };
               img.src = Lampa.TMDB.image('t/p/w300' + episode.still_path);
               images.push(img);
             } else {
               loader.remove();
-              image.append('<div class=\"online-prestige__episode-number\">' + ('0' + episode.episode_number).slice(-2) + '</div>');
+              image.append('<div class="online-prestige__episode-number">' + ('0' + episode.episode_number).slice(-2) + '</div>');
             }
             html.on('hover:focus', function(e) {
               last = e.target;
@@ -3050,7 +3050,7 @@
           menu.push({ title: Lampa.Lang.translate('lampac_video'), separator: true });
           menu.push({ title: Lampa.Lang.translate('torrent_parser_label_title'), mark: true });
           menu.push({ title: Lampa.Lang.translate('torrent_parser_label_cancel_title'), unmark: true });
-          if (params.element && params.element.episode) menu.push({ title: Lampa.Lang.translate('z01_mark_before'), markbefore: true });
+          if (params.element && params.element.episode) menu.push({ title: Lampa.Lang.translate('fx1_mark_before'), markbefore: true });
           menu.push({ title: Lampa.Lang.translate('time_reset'), timeclear: true });
           if (extra) menu.push({ title: Lampa.Lang.translate('copy_link'), copylink: true });
           if (window.lampac_online_context_menu) window.lampac_online_context_menu.push(menu, extra, params);
@@ -3060,7 +3060,7 @@
           }
           menu.push({ title: Lampa.Lang.translate('lampac_clear_all_marks'), clearallmark: true });
           menu.push({ title: Lampa.Lang.translate('lampac_clear_all_timecodes'), timeclearall: true });
-          if (modern) menu.push({ title: Lampa.Lang.translate('z01_clarify'), clarify: true });
+          if (modern) menu.push({ title: Lampa.Lang.translate('fx1_clarify'), clarify: true });
           Lampa.Select.show({
             title: Lampa.Lang.translate('title_action'),
             items: menu,
@@ -3118,21 +3118,21 @@
       var next = this.nextSource();
       if (next && !object.balanser) {
         actions.push({
-          title: Lampa.Lang.translate('z01_try_source').replace('{name}', sources[next].name || next),
-          icon: Z01UI.icon.play,
+          title: Lampa.Lang.translate('fx1_try_source').replace('{name}', sources[next].name || next),
+          icon: FX1UI.icon.play,
           handler: function() { _this.switchSource(next); }
         });
       }
       if (!object.balanser && sourceKeys().length > 1) {
         actions.push({
-          title: Lampa.Lang.translate('z01_all_sources'),
-          icon: Z01UI.icon.chevron,
+          title: Lampa.Lang.translate('fx1_all_sources'),
+          icon: FX1UI.icon.chevron,
           handler: function() { _this.uiSourceMenu(); }
         });
       }
       actions.push({
-        title: Lampa.Lang.translate('z01_retry'),
-        icon: Z01UI.icon.refresh,
+        title: Lampa.Lang.translate('fx1_retry'),
+        icon: FX1UI.icon.refresh,
         handler: function() {
           ui_focus = '';
           _this.uiLoading();
@@ -3140,8 +3140,8 @@
         }
       });
       actions.push({
-        title: Lampa.Lang.translate('z01_clarify'),
-        icon: Z01UI.icon.search,
+        title: Lampa.Lang.translate('fx1_clarify'),
+        icon: FX1UI.icon.search,
         handler: function() { _this.uiSearch(); }
       });
       return actions;
@@ -3151,7 +3151,7 @@
       if (modern) {
         this.uiNote({
           title: Lampa.Lang.translate('empty_title_two'),
-          text: Lampa.Lang.translate('z01_empty_text').replace('{name}', (sources[balanser] && sources[balanser].name) || balanser || ''),
+          text: Lampa.Lang.translate('fx1_empty_text').replace('{name}', (sources[balanser] && sources[balanser].name) || balanser || ''),
           actions: this.uiRecoveryActions()
         });
         return;
@@ -3167,14 +3167,14 @@
 
     this.noConnectToServer = function(er) {
       if (modern) {
-        var denial = Z01UI.serverDenial(er);
+        var denial = FX1UI.serverDenial(er);
         this.uiNote({
           qr: denial ? denial.link : '',
-          title: Lampa.Lang.translate(denial ? 'z01_no_access' : 'title_error'),
-          text: denial ? denial.msg : Lampa.Lang.translate('z01_no_server'),
+          title: Lampa.Lang.translate(denial ? 'fx1_no_access' : 'title_error'),
+          text: denial ? denial.msg : Lampa.Lang.translate('fx1_no_server'),
           actions: [{
-            title: Lampa.Lang.translate('z01_retry'),
-            icon: Z01UI.icon.refresh,
+            title: Lampa.Lang.translate('fx1_retry'),
+            icon: FX1UI.icon.refresh,
             handler: function() { Lampa.Activity.replace(); }
           }]
         });
@@ -3194,16 +3194,16 @@
       if (modern) {
         ui_tried[balanser] = true;
         clearInterval(balanser_timer);
-        var denial = Z01UI.serverDenial(er);
+        var denial = FX1UI.serverDenial(er);
         var auto = !object.balanser && !denial;
         var next = auto ? this.nextSource() : '';
         var tic = er && er.accsdb ? 10 : 6;
         var note = this.uiNote({
           qr: denial ? denial.link : '',
-          title: denial ? Lampa.Lang.translate('z01_no_access') : Lampa.Lang.translate(er && er.timeout ? 'z01_timeout_title' : 'z01_empty_title'),
+          title: denial ? Lampa.Lang.translate('fx1_no_access') : Lampa.Lang.translate(er && er.timeout ? 'fx1_timeout_title' : 'fx1_empty_title'),
           text: denial ? denial.msg : next ?
-            Lampa.Lang.translate('z01_auto_switch_text').replace('{name}', sources[next].name || next).replace('{sec}', '<span class="mo-info__timer">' + tic + '</span>') :
-            Lampa.Lang.translate(er && er.timeout ? 'z01_timeout_text' : 'z01_empty_text').replace('{name}', (sources[balanser] && sources[balanser].name) || balanser || ''),
+            Lampa.Lang.translate('fx1_auto_switch_text').replace('{name}', sources[next].name || next).replace('{sec}', '<span class="mo-info__timer">' + tic + '</span>') :
+            Lampa.Lang.translate(er && er.timeout ? 'fx1_timeout_text' : 'fx1_empty_text').replace('{name}', (sources[balanser] && sources[balanser].name) || balanser || ''),
           actions: this.uiRecoveryActions({ reason: 'no_results' })
         });
         if (next) {
@@ -3328,18 +3328,26 @@
     };
   }
 
+  function fx1SetTitle(item, text) {
+    var el = item.find('.settings-param__name,.settings-param__label,.settings-param-title__text');
+    if (el.length) el.text(text);
+    else item.children().first().text(text);
+  }
+
   function startPlugin() {
     window.lampac_z_plugin = true;
     var manifst = {
       type: 'video',
       version: '',
-      name: 'Z01',
+      name: 'FX1',
       description: 'Онлайн фильмы и сериалы',
       component: 'lampac_z',
       onContextMenu: function onContextMenu(object) {
         return { name: Lampa.Lang.translate('lampac_watch'), description: 'Онлайн фильмы и сериалы' };
       },
       onContextLauch: function onContextLauch(object) {
+        if (!fx1Licensed()) { fx1ShowGate(); return; }
+        zpremAutoEnsure();
         resetTemplates();
         Lampa.Component.add('lampac_z', component);
         var id = Lampa.Utils.hash(object.number_of_seasons ? object.original_name : object.original_title);
@@ -3379,93 +3387,79 @@
       lampac_balanser_dont_work: { ru: 'Поиск не дал результатов', uk: 'Пошук не дав результатів', en: 'Search did not return any results', zh: '搜索 未返回任何结果' },
       lampac_balanser_timeout: { ru: 'Источник будет переключен автоматически через <span class="timeout">10</span> секунд.', uk: 'Джерело буде автоматично переключено через <span class="timeout">10</span> секунд.', en: 'The source will be switched automatically after <span class="timeout">10</span> seconds.', zh: '平衡器将在<span class="timeout">10</span>秒内自动切换。' },
       lampac_does_not_answer_text: { ru: 'Поиск не дал результатов', uk: 'Пошук не дав результатів', en: 'Search did not return any results', zh: '搜索 未返回任何结果' },
-      z01_continue: { ru: 'Продолжить', uk: 'Продовжити', en: 'Continue', zh: '继续' },
-      z01_watch: { ru: 'Смотреть', uk: 'Дивитися', en: 'Watch', zh: '观看' },
-      z01_clarify: { ru: 'Уточнить название', uk: 'Уточнити назву', en: 'Refine title', zh: '优化标题' },
-      z01_retry: { ru: 'Повторить', uk: 'Повторити', en: 'Retry', zh: '重试' },
-      z01_unknown: { ru: 'Неизвестно', uk: 'Невідомо', en: 'Unknown', zh: '未知' },
-      z01_try_source: { ru: 'Попробовать {name}', uk: 'Спробувати {name}', en: 'Try {name}', zh: '尝试 {name}' },
-      z01_all_sources: { ru: 'Все источники', uk: 'Усі джерела', en: 'All sources', zh: '所有来源' },
-      z01_empty_text: { ru: 'Источник «{name}» ничего не нашёл. Попробуйте другой источник или уточните название.', uk: 'Джерело «{name}» нічого не знайшло. Спробуйте інше джерело або уточніть назву.', en: 'Source "{name}" found nothing. Try another source or refine the title.', zh: '来源“{name}”没有找到任何内容。请尝试其他来源或优化标题。' },
-      z01_no_server: { ru: 'Сервер не отвечает. Проверьте интернет и попробуйте ещё раз.', uk: 'Сервер не відповідає. Перевірте інтернет і спробуйте ще раз.', en: 'The server is not responding. Check your connection and try again.', zh: '服务器无响应。请检查网络连接后重试。' },
-      z01_auto_switch_text: { ru: 'Через {sec} сек переключимся на «{name}»', uk: 'Через {sec} с перемкнемося на «{name}»', en: 'Switching to "{name}" in {sec} sec', zh: '{sec} 秒后切换到“{name}”' },
-      z01_season_progress: { ru: 'Просмотрено {seen} из {total}', uk: 'Переглянуто {seen} з {total}', en: 'Watched {seen} of {total}', zh: '已观看 {seen} / {total}' },
-      z01_voice_dub: { ru: 'Дубляж', uk: 'Дубляж', en: 'Dubbing', zh: '配音' },
-      z01_voice_mvo: { ru: 'Многоголосый', uk: 'Багатоголосий', en: 'Multi-voice', zh: '多人配音' },
-      z01_voice_dvo: { ru: 'Двухголосый', uk: 'Двоголосий', en: 'Two-voice', zh: '双人配音' },
-      z01_voice_avo: { ru: 'Авторский', uk: 'Авторський', en: 'Single-voice', zh: '单人配音' },
-      z01_voice_orig: { ru: 'Оригинал', uk: 'Оригінал', en: 'Original', zh: '原声' },
-      z01_voice_sub: { ru: 'Субтитры', uk: 'Субтитри', en: 'Subtitles', zh: '字幕' },
-      z01_voice_other: { ru: 'Прочие', uk: 'Інші', en: 'Other', zh: '其他' },
-      z01_empty_title: { ru: 'Поиск не дал результатов', uk: 'Пошук не дав результатів', en: 'Search did not return any results', zh: '搜索未返回任何结果' },
-      z01_timeout_title: { ru: 'Источник не ответил', uk: 'Джерело не відповіло', en: 'The source did not respond', zh: '来源未响应' },
-      z01_timeout_text: { ru: '«{name}» слишком долго не отвечает. Возьмём другой источник или попробуем ещё раз.', uk: '«{name}» надто довго не відповідає. Візьмемо інше джерело або спробуємо ще раз.', en: '"{name}" is taking too long. Try another source or repeat the request.', zh: '“{name}”响应时间过长。请更换来源或重试。' },
-      z01_similar_best: { ru: 'Похоже, это он', uk: 'Схоже, це він', en: 'Looks like this one', zh: '应该是这部' },
-      z01_similar_all: { ru: 'Варианты', uk: 'Варіанти', en: 'Other matches', zh: '其他结果' },
-      z01_mark_before: { ru: 'Отметить всё до этой', uk: 'Позначити все до цієї', en: 'Mark everything up to this', zh: '标记此集之前全部' },
-      z01_season_left: { ru: 'осталось {left}', uk: 'залишилось {left}', en: '{left} left', zh: '还剩 {left} 集' },
-      z01_no_access: { ru: 'Нет доступа', uk: 'Немає доступу', en: 'No access', zh: '无访问权限' },
-      z01_no_access_text: { ru: 'Сервер отказал в доступе', uk: 'Сервер відмовив у доступі', en: 'The server denied access', zh: '服务器拒绝访问' },
-      z01_left: { ru: 'осталось', uk: 'залишилось', en: 'left', zh: '剩余' },
-      z01_loading_title: { ru: 'Ищем, где посмотреть', uk: 'Шукаємо, де подивитися', en: 'Looking for sources', zh: '正在查找播放源' },
-      z01_loading_list: { ru: 'Загружаем список', uk: 'Завантажуємо список', en: 'Loading the list', zh: '正在加载列表' },
-      z01_loading_start: { ru: 'Опрашиваем источники', uk: 'Опитуємо джерела', en: 'Polling sources', zh: '正在查询来源' },
-      z01_loading_found: { ru: 'Найдено источников: {n}', uk: 'Знайдено джерел: {n}', en: 'Sources found: {n}', zh: '已找到来源：{n}' },
-      z01_loading_slow: { ru: 'отвечают медленно', uk: 'відповідають повільно', en: 'responding slowly', zh: '响应缓慢' },
-      z01_sec: { ru: ' с', uk: ' с', en: 's', zh: ' 秒' },
-      z01_ui_mode_name: { ru: 'Интерфейс', uk: 'Інтерфейс', en: 'Interface', zh: '界面' },
-      z01_ui_mode_descr: { ru: 'Новый — шапка с продолжением и выбор перевода на экране', uk: 'Новий — шапка з продовженням і вибір перекладу на екрані', en: 'New — hero header with resume and on-screen translation picker', zh: '新版 — 带继续播放的头部和屏幕上的翻译选择' },
-      z01_ui_modern: { ru: 'Новый', uk: 'Новий', en: 'New', zh: '新版' },
-      z01_ui_classic: { ru: 'Классический', uk: 'Класичний', en: 'Classic', zh: '经典' }
+      fx1_continue: { ru: 'Продолжить', uk: 'Продовжити', en: 'Continue', zh: '继续' },
+      fx1_watch: { ru: 'Смотреть', uk: 'Дивитися', en: 'Watch', zh: '观看' },
+      fx1_clarify: { ru: 'Уточнить название', uk: 'Уточнити назву', en: 'Refine title', zh: '优化标题' },
+      fx1_retry: { ru: 'Повторить', uk: 'Повторити', en: 'Retry', zh: '重试' },
+      fx1_unknown: { ru: 'Неизвестно', uk: 'Невідомо', en: 'Unknown', zh: '未知' },
+      fx1_try_source: { ru: 'Попробовать {name}', uk: 'Спробувати {name}', en: 'Try {name}', zh: '尝试 {name}' },
+      fx1_all_sources: { ru: 'Все источники', uk: 'Усі джерела', en: 'All sources', zh: '所有来源' },
+      fx1_empty_text: { ru: 'Источник «{name}» ничего не нашёл. Попробуйте другой источник или уточните название.', uk: 'Джерело «{name}» нічого не знайшло. Спробуйте інше джерело або уточніть назву.', en: 'Source "{name}" found nothing. Try another source or refine the title.', zh: '来源“{name}”没有找到任何内容。请尝试其他来源或优化标题。' },
+      fx1_no_server: { ru: 'Сервер не отвечает. Проверьте интернет и попробуйте ещё раз.', uk: 'Сервер не відповідає. Перевірте інтернет і спробуйте ще раз.', en: 'The server is not responding. Check your connection and try again.', zh: '服务器无响应。请检查网络连接后重试。' },
+      fx1_auto_switch_text: { ru: 'Через {sec} сек переключимся на «{name}»', uk: 'Через {sec} с перемкнемося на «{name}»', en: 'Switching to "{name}" in {sec} sec', zh: '{sec} 秒后切换到“{name}”' },
+      fx1_season_progress: { ru: 'Просмотрено {seen} из {total}', uk: 'Переглянуто {seen} з {total}', en: 'Watched {seen} of {total}', zh: '已观看 {seen} / {total}' },
+      fx1_voice_dub: { ru: 'Дубляж', uk: 'Дубляж', en: 'Dubbing', zh: '配音' },
+      fx1_voice_mvo: { ru: 'Многоголосый', uk: 'Багатоголосий', en: 'Multi-voice', zh: '多人配音' },
+      fx1_voice_dvo: { ru: 'Двухголосый', uk: 'Двоголосий', en: 'Two-voice', zh: '双人配音' },
+      fx1_voice_avo: { ru: 'Авторский', uk: 'Авторський', en: 'Single-voice', zh: '单人配音' },
+      fx1_voice_orig: { ru: 'Оригинал', uk: 'Оригінал', en: 'Original', zh: '原声' },
+      fx1_voice_sub: { ru: 'Субтитры', uk: 'Субтитри', en: 'Subtitles', zh: '字幕' },
+      fx1_voice_other: { ru: 'Прочие', uk: 'Інші', en: 'Other', zh: '其他' },
+      fx1_empty_title: { ru: 'Поиск не дал результатов', uk: 'Пошук не дав результатів', en: 'Search did not return any results', zh: '搜索未返回任何结果' },
+      fx1_timeout_title: { ru: 'Источник не ответил', uk: 'Джерело не відповіло', en: 'The source did not respond', zh: '来源未响应' },
+      fx1_timeout_text: { ru: '«{name}» слишком долго не отвечает. Возьмём другой источник или попробуем ещё раз.', uk: '«{name}» надто довго не відповідає. Візьмемо інше джерело або спробуємо ще раз.', en: '"{name}" is taking too long. Try another source or repeat the request.', zh: '“{name}”响应时间过长。请更换来源或重试。' },
+      fx1_similar_best: { ru: 'Похоже, это он', uk: 'Схоже, це він', en: 'Looks like this one', zh: '应该是这部' },
+      fx1_similar_all: { ru: 'Варианты', uk: 'Варіанти', en: 'Other matches', zh: '其他结果' },
+      fx1_mark_before: { ru: 'Отметить всё до этой', uk: 'Позначити все до цієї', en: 'Mark everything up to this', zh: '标记此集之前全部' },
+      fx1_season_left: { ru: 'осталось {left}', uk: 'залишилось {left}', en: '{left} left', zh: '还剩 {left} 集' },
+      fx1_no_access: { ru: 'Нет доступа', uk: 'Немає доступу', en: 'No access', zh: '无访问权限' },
+      fx1_no_access_text: { ru: 'Сервер отказал в доступе', uk: 'Сервер відмовив у доступі', en: 'The server denied access', zh: '服务器拒绝访问' },
+      fx1_left: { ru: 'осталось', uk: 'залишилось', en: 'left', zh: '剩余' },
+      fx1_loading_title: { ru: 'Ищем, где посмотреть', uk: 'Шукаємо, де подивитися', en: 'Looking for sources', zh: '正在查找播放源' },
+      fx1_loading_list: { ru: 'Загружаем список', uk: 'Завантажуємо список', en: 'Loading the list', zh: '正在加载列表' },
+      fx1_loading_start: { ru: 'Опрашиваем источники', uk: 'Опитуємо джерела', en: 'Polling sources', zh: '正在查询来源' },
+      fx1_loading_found: { ru: 'Найдено источников: {n}', uk: 'Знайдено джерел: {n}', en: 'Sources found: {n}', zh: '已找到来源：{n}' },
+      fx1_loading_slow: { ru: 'отвечают медленно', uk: 'відповідають повільно', en: 'responding slowly', zh: '响应缓慢' },
+      fx1_sec: { ru: ' с', uk: ' с', en: 's', zh: ' 秒' },
+      fx1_ui_mode_name: { ru: 'Интерфейс', uk: 'Інтерфейс', en: 'Interface', zh: '界面' },
+      fx1_ui_mode_descr: { ru: 'Новый — шапка с продолжением и выбор перевода на экране', uk: 'Новий — шапка з продовженням і вибір перекладу на екрані', en: 'New — hero header with resume and on-screen translation picker', zh: '新版 — 带继续播放的头部和屏幕上的翻译选择' },
+      fx1_ui_modern: { ru: 'Новый', uk: 'Новий', en: 'New', zh: '新版' },
+      fx1_ui_classic: { ru: 'Классический', uk: 'Класичний', en: 'Classic', zh: '经典' }
     });
 
+    // Настройки исключительно FX1 License — без сторонних ссылок оплаты и кнопок триала
     Lampa.SettingsApi.addComponent({
-      component: 'z01_premium',
-      icon: '<svg width="36" height="36" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="8" y="8" width="112" height="112" rx="32" fill="none" stroke="white" stroke-width="12"/><path d="M38 36h52L38 92h52" stroke="white" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>',
-      name: isZpremActive() ? 'Z01 Premium ★' : 'Z01 Premium'
+      component: 'fx1_license',
+      icon: '<svg width="36" height="36" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="8" y="8" width="112" height="112" rx="32" fill="none" stroke="white" stroke-width="12"/><path d="M42 92V36h46M42 62h34" stroke="white" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>',
+      name: fx1Licensed() ? 'FX1 License ★' : 'FX1 License'
     });
 
     Lampa.SettingsApi.addParam({
-      component: 'z01_premium',
-      param: { name: 'z01_status_title', type: 'title', default: true },
+      component: 'fx1_license',
+      param: { name: 'fx1_status_title', type: 'title', default: true },
       field: { name: '...' },
       onRender: function(item) {
-        var offLic = fx1License();
-        var statusText;
-        if (offLic.state === 'active') {
-          statusText = '● Оффлайн Премиум активен — осталось ' + fx1DaysText(offLic.days);
-        } else {
-          var key = Lampa.Storage.get('zpremkey', '');
-          if (key) {
-            var exp = Lampa.Storage.get('zprem_expires', '');
-            if (exp) {
-              var days = Math.ceil((new Date(exp).getTime() - Date.now()) / 86400000);
-              if (days > 0) statusText = '● Демо/Онлайн активна — осталось ' + zpremDaysText(days);
-              else statusText = '● Демо истекло';
-            } else statusText = '● Подписка истекла';
-          } else statusText = '○ Подписка не активна';
-        }
-        var el = item.find('.settings-param__name,.settings-param__label,.settings-param-title__text');
-        if (el.length) el.text(statusText); else item.children().first().text(statusText);
+        var lic = fx1License();
+        var text;
+        if (lic.state === 'active') text = '● Подписка активна — осталось ' + fx1DaysText(lic.days) + ' (до ' + lic.until + ')';
+        else if (lic.state === 'expired') text = '● Подписка истекла (' + lic.until + ')';
+        else if (lic.state === 'bad') text = '○ Ключ не подходит к этому устройству';
+        else text = '○ Подписка не активна';
+        fx1SetTitle(item, text);
       }
     });
 
     Lampa.SettingsApi.addParam({
-      component: 'z01_premium',
+      component: 'fx1_license',
       param: { name: 'fx1_device_title', type: 'title', default: true },
       field: { name: '...' },
-      onRender: function(item) {
-        var text = 'ID устройства: ' + fx1DeviceId();
-        var el = item.find('.settings-param__name,.settings-param__label,.settings-param-title__text');
-        if (el.length) el.text(text);
-        else item.children().first().text(text);
-      }
+      onRender: function(item) { fx1SetTitle(item, 'ID устройства: ' + fx1DeviceId()); }
     });
 
     Lampa.SettingsApi.addParam({
-      component: 'z01_premium',
+      component: 'fx1_license',
       param: { name: 'fx1_key_input', type: 'input', values: '', placeholder: '261030-AB3K9', default: '' },
-      field: { name: 'Ввести ключ активации', description: 'Ключ из 12 символов для Премиум доступа' },
+      field: { name: 'Ввести ключ активации', description: 'Ключ из 12 символов, выдаёт ' + FX1_TG_NAME },
       onChange: function(value) {
         var raw = (typeof value === 'string' && value) ? value : Lampa.Storage.get('fx1_key_input', '');
         Lampa.Storage.set('fx1_key_input', '');
@@ -3482,120 +3476,26 @@
     });
 
     Lampa.SettingsApi.addParam({
-      component: 'z01_premium',
-      param: { name: 'z01_buy', type: 'button', default: '' },
-      field: { name: 'Купить подписку', description: 'Онлайн фильмы и сериалы' },
-      onRender: function(item) {
-        var label = Lampa.Storage.get('zpremkey', '') ? 'Продлить подписку' : 'Купить подписку';
-        item.find('.settings-param__name').text(label);
-        item.find('.settings-param__descr,.settings-param__status').text('Дни суммируются при продлении');
-      },
+      component: 'fx1_license',
+      param: { name: 'fx1_buy', type: 'button', default: '' },
+      field: { name: 'Купить / продлить подписку', description: 'Активация и покупка: ' + FX1_TG_NAME },
       onChange: function() {
-        var email = getZ01Email();
-        var payUrl = ZPREM_PAY_URL + '?email=' + encodeURIComponent(email);
-        var ua = navigator.userAgent.toLowerCase();
-        var isTV = ua.indexOf('tizen') !== -1 || ua.indexOf('webos') !== -1 || ua.indexOf('web0s') !== -1 || ua.indexOf('smart-tv') !== -1 || ua.indexOf('smarttv') !== -1 || ua.indexOf('android tv') !== -1 || ua.indexOf('atv') !== -1 || ua.indexOf('tv browser') !== -1 || (typeof window.tizen !== 'undefined') || (typeof window.webOS !== 'undefined') || (ua.indexOf('crkey') !== -1);
-        if (!isTV && (ua.indexOf('mobile') !== -1 || ua.indexOf('iphone') !== -1 || ua.indexOf('ipad') !== -1 || ua.indexOf('mozilla') !== -1)) {
-          window.open(payUrl, '_blank');
-          return;
-        }
-        var qrSize = 200;
-        var qrUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=' + qrSize + 'x' + qrSize + '&data=' + encodeURIComponent(payUrl) + '&bgcolor=1a1a2e&color=ffffff&format=png';
-        var modalHtml = $('<div style="padding:1.5em;text-align:center;"><div style="font-size:1.5em;margin-bottom:0.3em;color:#667eea;">★ Z01 Premium</div><div style="font-size:1.1em;margin-bottom:1em;opacity:0.8;">Отсканируйте QR-код камерой телефона для оплаты</div><div style="background:#fff;display:inline-block;padding:12px;border-radius:12px;margin-bottom:1em;"><img src="' + qrUrl + '" width="' + qrSize + '" height="' + qrSize + '" style="display:block;width:' + qrSize + 'px;height:' + qrSize + 'px;max-width:' + qrSize + 'px;max-height:' + qrSize + 'px;object-fit:contain;" /></div><div style="font-size:1.2em;opacity:0.9;margin-bottom:1em;">или <a style="color:#fff" href="'+payUrl+'">перейдите по Ссылке</a></div><div class="zprem-pay-done selector" style="background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);padding:0.6em 2em;border-radius:0.3em;font-size:1.2em;display:inline-block;cursor:pointer;">Я оплатил</div></div>');
-        modalHtml.find('.zprem-pay-done').on('hover:enter click', function() {
-          Lampa.Modal.close();
-          Lampa.Controller.toggle('settings_component');
-          Lampa.Noty.show('Проверяем...');
-          zpremCheck(function(ok) {
-            if (ok) {
-              var d = Math.ceil((new Date(Lampa.Storage.get('zprem_expires','')).getTime() - Date.now()) / 86400000);
-              Lampa.Noty.show('Подписка активна! Осталось: ' + zpremDaysText(d));
-            } else {
-              Lampa.Noty.show('Оплата ещё не поступила, попробуйте позже');
-            }
-            try { Lampa.Settings.update(); } catch(e) {}
-          });
-        });
-        Lampa.Modal.open({
-          title: '',
-          html: modalHtml,
-          onBack: function() {
-            Lampa.Modal.close();
-            Lampa.Controller.toggle('settings_component');
-          }
-        });
+        fx1OpenContact('Для покупки и активации напишите в Telegram и сообщите ID устройства.', 'settings_component');
       }
     });
 
     Lampa.SettingsApi.addParam({
-      component: 'z01_premium',
-      param: { name: 'z01_trial', type: 'button', default: '' },
-      field: { name: '🎁 Получить / Обновить демо 48ч', description: 'Онлайн фильмы и сериалы' },
-      onRender: function(item) {
-        item.css('display', '');
-        item.find('.settings-param__name').text('🎁 Получить / Обновить демо 48ч');
-        item.find('.settings-param__descr,.settings-param__status').text('Генерация нового ID и сброс демо-доступа');
-      },
-      onChange: function() {
-        Lampa.Noty.show('Активация нового демо...');
-        zpremResetTrial(true);
-        setTimeout(function() {
-          zpremTrial(function(ok, reason) {
-            if (ok) {
-              Lampa.Noty.show('Новый демо-доступ на 48ч активирован! Перезагрузка...');
-              setTimeout(function() { location.reload(); }, 1500);
-            } else {
-              Lampa.Noty.show('Ошибка: ' + reason);
-            }
-          });
-        }, 300);
-      }
-    });
-
-    Lampa.SettingsApi.addParam({
-      component: 'z01_premium',
-      param: { name: 'z01_force_reset', type: 'button', default: '' },
-      field: { name: 'Сбросить демо-режим', description: 'Очистить историю триала и сгенерировать новый ID' },
-      onRender: function(item) {
-        item.find('.settings-param__descr,.settings-param__status').text('Смена виртуального ID и Email');
-      },
-      onChange: function() {
-        zpremResetTrial(false);
-        try { Lampa.Settings.update(); } catch(e) {}
-      }
-    });
-
-    Lampa.SettingsApi.addParam({
-      component: 'z01_premium',
-      param: { name: 'z01_check', type: 'button', default: '' },
-      field: { name: 'Проверить подписку', description: 'Онлайн фильмы и сериалы' },
-      onRender: function(item) { item.find('.settings-param__descr,.settings-param__status').text('Обновить статус с сервера'); },
-      onChange: function() {
-        Lampa.Noty.show('Проверяем...');
-        zpremCheck(function(ok) {
-          if (ok) {
-            var d = Math.ceil((new Date(Lampa.Storage.get('zprem_expires','')).getTime() - Date.now()) / 86400000);
-            Lampa.Noty.show('Подписка активна! Осталось: ' + zpremDaysText(d));
-          } else {
-            Lampa.Noty.show('Подписка не найдена');
-          }
-          try { Lampa.Settings.update(); } catch(e) {}
-        });
-      }
-    });
-
-    Lampa.SettingsApi.addParam({
-      component: 'z01_premium',
+      component: 'fx1_license',
       param: {
-        name: 'z01_ui_mode',
+        name: 'fx1_ui_mode',
         type: 'select',
-        values: { modern: Lampa.Lang.translate('z01_ui_modern'), classic: Lampa.Lang.translate('z01_ui_classic') },
+        values: { modern: Lampa.Lang.translate('fx1_ui_modern'), classic: Lampa.Lang.translate('fx1_ui_classic') },
         "default": 'modern'
       },
-      field: { name: Lampa.Lang.translate('z01_ui_mode_name'), description: Lampa.Lang.translate('z01_ui_mode_descr') }
+      field: { name: Lampa.Lang.translate('fx1_ui_mode_name'), description: Lampa.Lang.translate('fx1_ui_mode_descr') }
     });
 
-    $('body').append(Z01UI.css);
+    $('body').append(FX1UI.css);
 
     function resetTemplates() {
       Lampa.Template.add('lampac_prestige_full', "<div class=\"online-prestige online-prestige--full selector\"><div class=\"online-prestige__img\"><img alt=\"\"><div class=\"online-prestige__loader\"></div></div><div class=\"online-prestige__body\"><div class=\"online-prestige__head\"><div class=\"online-prestige__title\">{title}</div><div class=\"online-prestige__time\">{time}</div></div><div class=\"online-prestige__timeline\"></div><div class=\"online-prestige__footer\"><div class=\"online-prestige__info\">{info}</div><div class=\"online-prestige__quality\">{quality}</div></div></div></div>");
@@ -3606,7 +3506,7 @@
       Lampa.Template.add('lampac_prestige_watched', "<div class=\"online-prestige online-prestige-watched selector\"><div class=\"online-prestige-watched__icon\"><svg width=\"21\" height=\"21\" viewBox=\"0 0 21 21\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\"><circle cx=\"10.5\" cy=\"10.5\" r=\"9\" stroke=\"currentColor\" stroke-width=\"3\"/><path d=\"M14.8477 10.5628L8.20312 14.399L8.20313 6.72656L14.8477 10.5628Z\" fill=\"currentColor\"/></svg></div><div class=\"online-prestige-watched__body\"></div></div>");
     }
 
-    var button = "<div class=\"full-start__button selector view--online lampac--button\" data-subtitle=\"".concat(manifst.name, " ").concat(manifst.version, "\"><svg width=\"128\" height=\"128\" viewBox=\"0 0 128 128\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\"><rect x=\"8\" y=\"8\" width=\"112\" height=\"112\" rx=\"32\" fill=\"white\" stroke=\"#2886fb\" stroke-width=\"12\"/><path d=\"M38 36h52L38 92h52\" stroke=\"#2886fb\" stroke-width=\"12\" stroke-linecap=\"round\" stroke-linejoin=\"round\" fill=\"none\"/></svg><span>#{title_online}</span></div>");
+    var button = "<div class=\"full-start__button selector view--online lampac--button\" data-subtitle=\"".concat(manifst.name, " ").concat(manifst.version, "\"><svg width=\"128\" height=\"128\" viewBox=\"0 0 128 128\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\"><rect x=\"8\" y=\"8\" width=\"112\" height=\"112\" rx=\"32\" fill=\"white\" stroke=\"#2886fb\" stroke-width=\"12\"/><path d=\"M42 92V36h46M42 62h34\" stroke=\"#2886fb\" stroke-width=\"12\" stroke-linecap=\"round\" stroke-linejoin=\"round\" fill=\"none\"/></svg><span>#{title_online}</span></div>");
     Lampa.Component.add('lampac_z', component);
     resetTemplates();
 
@@ -3614,6 +3514,8 @@
       if (e.render.find('.lampac--button').length) return;
       var btn = $(Lampa.Lang.translate(button));
       btn.on('hover:enter', function() {
+        if (!fx1Licensed()) { fx1ShowGate(); return; }
+        zpremAutoEnsure();
         resetTemplates();
         Lampa.Component.add('lampac_z', component);
         var id = Lampa.Utils.hash(e.movie.number_of_seasons ? e.movie.original_name : e.movie.original_title);
@@ -3623,7 +3525,7 @@
         var watched = Lampa.Storage.cache('online_watched_last', 5000, {});
         var watchedData = watched[file_id];
 
-        if (Z01UI.enabled()) {
+        if (FX1UI.enabled()) {
           if (isSeries && watchedData && watchedData.balanser && watchedData.season && watchedData.episode) {
             var last_balanser_map = Lampa.Storage.cache('online_last_balanser', 3000, {});
             last_balanser_map[e.movie.id] = watchedData.balanser;
@@ -3748,13 +3650,13 @@
       balansers_sync.forEach(syncBalanser);
       Lampa.Storage.sync('online_watched_last', 'object_object');
       Lampa.Storage.sync('online_last_balanser', 'object_object');
-      Lampa.Storage.sync('z01_season_last', 'object_object');
-      Lampa.Storage.sync('z01_reach', 'object_object');
+      Lampa.Storage.sync('fx1_season_last', 'object_object');
+      Lampa.Storage.sync('fx1_reach', 'object_object');
       Lampa.Storage.sync('online_view', 'object_array');
     }
   }
 
-  // Автопроверка и активация демо при старте
+  // Фоновая инициализация демо при старте
   zpremActivate();
 
   if (!window.lampac_z_plugin) startPlugin();
